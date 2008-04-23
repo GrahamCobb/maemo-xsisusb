@@ -1,0 +1,119 @@
+diff --git a/hw/kdrive/src/kxv.c b/hw/kdrive/src/kxv.c
+index d2cd672..5db7cbe 100644
+--- a/hw/kdrive/src/kxv.c
++++ b/hw/kdrive/src/kxv.c
+@@ -1882,19 +1882,105 @@ KdXVCopyPlanarData(KdScreenInfo *screen,
+ 
+     dst1 = dst;
+ 
++    /* Don't forget to multiply w by 2 in your head every time you see it
++     * below ... */
+     w >>= 1;
+     for (j = 0; j < h; j++) {
+ 	CARD32 *dst = (CARD32 *)dst1;
+-        CARD16 *s1 = (CARD16 *) src1;
+-	CARD8 *s2 = src2;
+-	CARD8 *s3 = src3;
+-
+-	for (i = 0; i < w; i++) {
+-            *dst++ = (*s1 & 0x00ff) | ((*s1 & 0xff00) << 8) | (*s3 << 8) | (*s2 << 24);
++        CARD32 *s1 = (CARD32 *) src1;
++        CARD8 *s18;
++        CARD32 *s2 = (CARD32 *) src2;
++        CARD32 *s3 = (CARD32 *) src3;
++
++        /* 2     1++       3      1 */
++        for (i = 0; i < w; i += 4) {
++            /* Hand-unrolled for insane optimisation; this is equivalent to
++             * two runs of the w & 3 branch below, except in its capacity to
++             * induce violent illness. */
++            s18 = (CARD8 *) s1;
++#if 0
++            *dst++ = (*s1 & 0x000000ff) | ((*s1 & 0x0000ff00) << 8) | \
++                     ((*s3 & 0x000000ff) << 8) | ((*s2 & 0x000000ff) << 24);
++#endif
++            *dst++ = (*s18) | (*(s18 + 1) << 16) | ((*s3 & 0x000000ff) << 8) | ((*s2 & 0x000000ff) << 24);
++            if ((*s1 & 0x000000ff) != *s18) {
++                ErrorF("one one is different\n");
++                ErrorF("one: %lx vs %lx; %lx vs %lx\n", (*s1 & 0x000000ff), *s18, (*s1 & 0x0000ff00) >> 8, *(s18 + 1));
++            }
++            if ((*s1 & 0x0000ff00) >> 8 != *(s18 + 1)) {
++                ErrorF("one two is different\n");
++                ErrorF("one: %lx vs %lx; %lx vs %lx\n", (*s1 & 0x000000ff), *s18, (*s1 & 0x0000ff00) >> 8, *(s18 + 1));
++            }
++#if 0
++            *dst++ = (*s1 & 0x00ff0000 >> 16) | ((*s1 & 0xff000000) >> 8) | \
++                     (*s3 & 0x0000ff00) | ((*s2 & 0x0000ff00) << 16);
++#endif
++            *dst++ = *(s18 + 2) | (*(s18 + 3) << 16) | (*s3 & 0x0000ff00) | ((*s2 & 0x0000ff00) << 16);
++            if ((*s1 & 0x00ff0000) >> 16 != *(s18 + 2)) {
++                ErrorF("two one is different\n");
++                ErrorF("two: %lx vs %lx; %lx vs %lx\n", (*s1 & 0x00ff0000) >> 16, *(s18 + 2), (*s1 & 0xff000000) >> 24, *(s18 + 3));
++            }
++            if ((*s1 & 0xff000000) >> 24 != *(s18 + 3)) {
++                ErrorF("two two is different\n");
++                ErrorF("two: %lx vs %lx; %lx vs %lx\n", (*s1 & 0x00ff0000) >> 16, *(s18 + 2), (*s1 & 0xff000000) >> 24, *(s18 + 3));
++            }
+             s1++;
+-	    s2++;
+-	    s3++;
+-	}
++            s18 = (CARD8 *) s1;
++#if 0
++            *dst++ = (*s1 & 0x000000ff) | ((*s1 & 0x0000ff00) << 8) | \
++                     ((*s3 & 0x00ff0000) >> 8) | ((*s2 & 0x00ff0000) << 8);
++#endif
++            *dst++ = (*s18) | (*(s18 + 1) << 16) | ((*s3 & 0x00ff0000) >> 8) | ((*s2 & 0x00ff0000) << 8);
++            if ((*s1 & 0x000000ff) != *s18) {
++                ErrorF("three one is different\n");
++                ErrorF("three: %lx vs %lx; %lx vs %lx\n", (*s1 & 0x000000ff), *s18, (*s1 & 0x0000ff00) >> 8, *(s18 + 1));
++            }
++            if ((*s1 & 0x0000ff00) >> 8 != *(s18 + 1)) {
++                ErrorF("three two is different\n");
++                ErrorF("three: %lx vs %lx; %lx vs %lx\n", (*s1 & 0x000000ff), *s18, (*s1 & 0x0000ff00) >> 8, *(s18 + 1));
++            }
++#if 0
++            *dst++ = (*s1 & 0x00ff0000 >> 16) | ((*s1 & 0xff000000) >> 8) | \
++                     ((*s3 & 0xff000000) >> 16) | (*s2 & 0xff000000);
++#endif
++            *dst++ = *(s18 + 2) | (*(s18 + 3) << 16) | ((*s3 & 0xff000000) >> 16) | (*s2 & 0xff000000);
++            if ((*s1 & 0x00ff0000) >> 16 != *(s18 + 2)) {
++                ErrorF("four one is different\n");
++                ErrorF("four: %lx vs %lx; %lx vs %lx\n", (*s1 & 0x00ff0000) >> 16, *(s18 + 2), (*s1 & 0xff000000) >> 24, *(s18 + 3));
++            }
++            if ((*s1 & 0xff000000) >> 24 != *(s18 + 3)) {
++                ErrorF("four two is different\n");
++                ErrorF("four: %lx vs %lx; %lx vs %lx\n", (*s1 & 0x00ff0000) >> 16, *(s18 + 2), (*s1 & 0xff000000) >> 24, *(s18 + 3));
++            }
++            s1++;
++            s2++;
++            s3++;
++        }
++
++        if (w & 3) {
++             CARD16 *hs2 = (CARD16 *) s2;
++             CARD16 *hs3 = (CARD16 *) s3;
++             /* Hand-unrolled for insane optimisation; this is equivalent to
++              * two runs of the w & 1 branch below, except not nearly as
++              * readable. */
++             *dst++ = (*s1 & 0x000000ff) | ((*s1 & 0x0000ff00) << 8) | \
++                      ((*hs3 & 0x00ff) << 8) | ((*hs2 & 0x00ff) << 24);
++             *dst++ = (*s1 & 0x00ff0000 >> 16) | ((*s1 & 0xff000000) >> 8) | \
++                      (*hs3 & 0xff00) | ((*hs2 & 0xff00) << 16);
++             s1++;
++             hs2++;
++             hs3++;
++
++             if (w & 1) {
++                 CARD16 *qs1 = (CARD16 *) s1;
++                 CARD8 *qs2 = (CARD8 *) hs2;
++                 CARD8 *qs3 = (CARD8 *) hs3;
++
++                 *dst = (*qs1 & 0x00ff) | ((*qs1 & 0xff00) << 8) | \
++                        (*qs3 << 8) | (*qs2 << 24);
++             }
++        }
++
+ 	src1 += srcPitch;
+ 	dst1 += dstPitch;
+ 	if (j & 1) {

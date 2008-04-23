@@ -1,0 +1,34 @@
+diff --git a/fb/fbpict.c b/fb/fbpict.c
+index c83fe0b..13157a7 100644
+--- a/fb/fbpict.c
++++ b/fb/fbpict.c
+@@ -1172,6 +1172,9 @@ #endif
+     params.height = height;
+
+     if (!func) {
++#if 0
++        ErrorF("fbCompositeGeneral: losing at op %d, format %d -> %d, %smask (%d), %srepeating source\n", op, pSrc->format, pDst->format, pMask ? "" : "no ", pMask->format, srcRepeat ? "" : "non-");
++#endif
+          /* no fast path, use the general code */
+          fbCompositeGeneral(&params);
+          return;
+diff --git a/render/render.c b/render/render.c
+index e4d8d6b..efbbd2b 100644
+--- a/render/render.c
++++ b/render/render.c
+@@ -746,7 +746,14 @@ ProcRenderComposite (ClientPtr client)
+                  RenderErrBase + BadPicture);
+     if ((pSrc->pDrawable && pSrc->pDrawable->pScreen != pDst->pDrawable->pScreen) ||
+        (pMask && pMask->pDrawable && pDst->pDrawable->pScreen != pMask->pDrawable->pScreen))
+-       return BadMatch;
++        return BadMatch;
++#if 0
++    if (stuff->op == PictOpOver && pMask && pMask->format == PICT_a8r8g8b8 && pSrc->format == PICT_x8b8g8r8 && pDst->format == PICT_r5g6b5 && !(pSrc->pDrawable->width == 1 && pSrc->pDrawable->height == 1)) {
++        ErrorF("killing client before it could make a very expensive request\n");
++        /*CloseDownClient(client);*/
++        return Success;
++    }
++#endif
+     CompositePicture (stuff->op,
+                      pSrc,
+                      pMask,

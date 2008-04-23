@@ -1,0 +1,2135 @@
+diff --git a/hw/kdrive/omap/omap.c b/hw/kdrive/omap/omap.c
+index feabbb5..5a99718 100644
+--- a/hw/kdrive/omap/omap.c
++++ b/hw/kdrive/omap/omap.c
+@@ -56,24 +56,25 @@ #include "scrnintstr.h"
+ #include "kdrive.h"
+ #include "omap.h"
+ 
+-static Bool omapCardInit(KdCardInfo *card)
++static Bool
++omap_card_init(KdCardInfo *card)
+ {
+-    OmapCardInfo *omapc;
++    struct omap_card_info *omapc;
+     char fbpath[10];
+     int i;
+ 
+     ENTER();
+ 
+-    omapc = (OmapCardInfo *) xcalloc(1, sizeof(OmapCardInfo));
++    omapc = (struct omap_card_info *) xcalloc(1, sizeof(*omapc));
+     if (!omapc)
+         return FALSE;
+ 
+-    if (!omapSetupPlane(omapc, "/dev/fb0", OMAP_PLANE_BASE))
++    if (!omap_plane_create(omapc, "/dev/fb0", OMAP_PLANE_BASE))
+         FatalError("omapCardInit: couldn't open dispc gfx plane\n");
+ 
+     for (i = 1; i < 100; i++) {
+         snprintf(fbpath, sizeof(fbpath), "/dev/fb%d", i);
+-        if (omapSetupPlane(omapc, fbpath, OMAP_PLANE_OVERLAY))
++        if (omap_plane_create(omapc, fbpath, OMAP_PLANE_OVERLAY))
+             DebugF("omapCardInit: added plane %d\n", i);
+         else
+             break;
+@@ -85,17 +86,18 @@ static Bool omapCardInit(KdCardInfo *car
+     return TRUE;
+ }
+ 
+-static void omapCardFini(KdCardInfo *card)
++static void
++omap_card_fini(KdCardInfo *card)
+ {
+-    OmapPlaneInfo *plane, *next;
+-    OmapCardInfo *omapc = card->driver;
++    struct omap_plane_info *plane, *next;
++    struct omap_card_info *omapc = card->driver;
+ 
+     ENTER();
+ 
+     plane = omapc->planes;
+     while (plane) {
+         next = plane->next;
+-        omapPlaneDestroy(plane);
++        omap_plane_destroy(plane);
+         plane = next;
+     }
+     omapc->planes = NULL;
+@@ -106,7 +108,8 @@ static void omapCardFini(KdCardInfo *car
+     LEAVE();
+ }
+ 
+-static Pixel omapMakeConfig(Pixel orig, Pixel others)
++static Pixel
++make_config(Pixel orig, Pixel others)
+ {
+     Pixel low;
+ 
+@@ -119,21 +122,23 @@ static Pixel omapMakeConfig(Pixel orig, 
+     return orig;
+ }
+ 
+-static void *omapWindowLinear(ScreenPtr pScreen, CARD32 row, CARD32 offset,
+-                              int mode, CARD32 *size, void *closure)
++static void
++*omap_shadow_window_linear(ScreenPtr screen, CARD32 row, CARD32 offset,
++                           int mode, CARD32 *size, void *closure)
+ {
+-    KdScreenPriv(pScreen);
+-    OmapScreenInfo *omaps = pScreenPriv->screen->driver;
++    KdScreenPriv(screen);
++    struct omap_screen_info *omaps = pScreenPriv->screen->driver;
+ 
+     *size = omaps->plane->pitch;
+     return omaps->plane->fb + row * omaps->plane->pitch + offset;
+ }
+ 
+-static Bool omapScreenInit(KdScreenInfo *screen)
++static Bool
++omap_screen_init(KdScreenInfo *screen)
+ {
+-    OmapScreenInfo *omaps;
+-    OmapCardInfo *omapc = screen->card->driver;
+-    OmapPlaneInfo *plane = NULL, *tmp;
++    struct omap_screen_info *omaps;
++    struct omap_card_info *omapc = screen->card->driver;
++    struct omap_plane_info *plane = NULL, *tmp;
+     struct fb_var_screeninfo var;
+     struct fb_fix_screeninfo fix;
+     int depth = 32;
+@@ -141,7 +146,7 @@ static Bool omapScreenInit(KdScreenInfo 
+ 
+     ENTER();
+ 
+-    omaps = (OmapScreenInfo *) xcalloc(1, sizeof(OmapScreenInfo));
++    omaps = (struct omap_screen_info *) xcalloc(1, sizeof(*omaps));
+     if (!omaps)
+         FatalError("omapScreenInit: couldn't allocate omaps\n");
+ 
+@@ -195,15 +200,15 @@ #define Mask(o, l) (((1 << l) - 1) << o)
+ #undef Mask
+ 
+     screen->fb[0].visuals = (1 << TrueColor);
+-    screen->fb[0].redMask = omapMakeConfig(screen->fb[0].redMask,
+-                                           (screen->fb[0].greenMask |
+-                                            screen->fb[0].blueMask)); 
+-    screen->fb[0].greenMask = omapMakeConfig(screen->fb[0].greenMask,
+-                                             (screen->fb[0].redMask |
+-                                              screen->fb[0].blueMask));
+-    screen->fb[0].blueMask = omapMakeConfig(screen->fb[0].blueMask,
+-                                            (screen->fb[0].redMask |
+-                                             screen->fb[0].greenMask));
++    screen->fb[0].redMask = make_config(screen->fb[0].redMask,
++                                        (screen->fb[0].greenMask |
++                                         screen->fb[0].blueMask)); 
++    screen->fb[0].greenMask = make_config(screen->fb[0].greenMask,
++                                          (screen->fb[0].redMask |
++                                           screen->fb[0].blueMask));
++    screen->fb[0].blueMask = make_config(screen->fb[0].blueMask,
++                                         (screen->fb[0].redMask |
++                                          screen->fb[0].greenMask));
+ 
+     allbits = screen->fb[0].redMask | screen->fb[0].greenMask |
+               screen->fb[0].blueMask;
+@@ -220,7 +225,7 @@ #undef Mask
+     if (ioctl(plane->fd, FBIOGET_FSCREENINFO, &fix) != 0)
+         FatalError("omapScreenInit: couldn't get fix info\n");
+ 
+-    if (!omapPlaneEnable(omaps->plane))
++    if (!omap_plane_enable(omaps->plane))
+         FatalError("omapScreenInit: couldn't enable base plane\n");
+ 
+     screen->memory_base = plane->fb;
+@@ -243,36 +248,38 @@ #undef Mask
+ }
+ 
+ 
+-static Bool omapInitScreen(ScreenPtr pScreen)
++static Bool
++omap_init_screen(ScreenPtr screen)
+ {
+-    KdScreenPriv(pScreen);
+-    omapScreenInfo(pScreenPriv);
++    KdScreenPriv(screen);
++    struct omap_screen_info *omaps = pScreenPriv->screen->driver;
+ 
+     ENTER();
+ 
+-    omapVideoInit(omaps);
++    omap_video_init(omaps);
+     
+     LEAVE();
+ 
+     return TRUE;
+ }
+ 
+-static Bool omapCreateResources(ScreenPtr pScreen)
++static Bool
++omap_create_resources(ScreenPtr screen)
+ {
+-    KdScreenPriv(pScreen);
+-    omapScreenInfo(pScreenPriv);
++    KdScreenPriv(screen);
++    struct omap_screen_info *omaps = pScreenPriv->screen->driver;
+ 
+     ENTER();
+ 
+-    if (!omapCreateDrawResources(omaps)) {
++    if (!omap_screen_resources_create(omaps)) {
+         ErrorF("omapCreateResources: couldn't create draw resources\n");
+         LEAVE();
+         return FALSE;
+     }
+ 
+     if (omaps->shadowfb) {
+-        if (!KdShadowSet(pScreen, RR_Rotate_0, shadowUpdatePacked,
+-                         omapWindowLinear, NULL)) {
++        if (!KdShadowSet(screen, RR_Rotate_0, shadowUpdatePacked,
++                         omap_shadow_window_linear, NULL)) {
+             ErrorF("omapCreateResources: couldn't enable shadow\n");
+             return FALSE;
+         }
+@@ -283,13 +290,14 @@ static Bool omapCreateResources(ScreenPt
+     return TRUE;
+ }
+ 
+-static Bool omapFinishInitScreen(ScreenPtr pScreen)
++static Bool
++omap_finish_init_screen(ScreenPtr screen)
+ {
+-    KdScreenPriv(pScreen);
+-    omapScreenInfo(pScreenPriv);
++    KdScreenPriv(screen);
++    struct omap_screen_info *omaps = pScreenPriv->screen->driver;
+ 
+     if (omaps->shadowfb) {
+-        if (!shadowSetup(pScreen)) {
++        if (!shadowSetup(screen)) {
+             ErrorF("omapFinishInitScreen: couldn't finish shadow init\n");
+             return FALSE;
+         }
+@@ -299,22 +307,24 @@ static Bool omapFinishInitScreen(ScreenP
+ }
+ 
+ /* FIXME: Implement real DPMS, taking it away from DSME. */
+-static Bool omapDPMS(ScreenPtr pScreen, int mode)
++static Bool
++omap_dpms(ScreenPtr screen, int mode)
+ {
+     return TRUE;
+ }
+ 
+-static void omapScreenFini(KdScreenInfo *screen)
++static void
++omap_screen_fini(KdScreenInfo *screen)
+ {
+-    OmapScreenInfo *omaps = screen->driver;
++    struct omap_screen_info *omaps = screen->driver;
+ 
+     ENTER();
+ 
+     if (omaps->shadowfb)
+         KdShadowFbFree(screen, 0);
+ 
+-    omapVideoFini(omaps);
+-    omapRemoveDrawResources(omaps);
++    omap_video_fini(omaps);
++    omap_screen_resources_destroy(omaps);
+ 
+     xfree(omaps);
+     screen->driver = NULL;
+@@ -322,13 +332,13 @@ static void omapScreenFini(KdScreenInfo 
+     LEAVE();
+ }
+ 
+-KdCardFuncs omapFuncs = {
+-    .cardinit         = omapCardInit,
+-    .scrinit          = omapScreenInit,
+-    .initScreen       = omapInitScreen,
+-    .createRes        = omapCreateResources,
+-    .dpms             = omapDPMS,
+-    .scrfini          = omapScreenFini,
+-    .finishInitScreen = omapFinishInitScreen,
+-    .cardfini         = omapCardFini,
++KdCardFuncs omap_funcs = {
++    .cardinit         = omap_card_init,
++    .cardfini         = omap_card_fini,
++    .scrinit          = omap_screen_init,
++    .scrfini          = omap_screen_fini,
++    .initScreen       = omap_init_screen,
++    .finishInitScreen = omap_finish_init_screen,
++    .createRes        = omap_create_resources,
++    .dpms             = omap_dpms,
+ };
+diff --git a/hw/kdrive/omap/omap.h b/hw/kdrive/omap/omap.h
+index a67b5aa..1e53129 100644
+--- a/hw/kdrive/omap/omap.h
++++ b/hw/kdrive/omap/omap.h
+@@ -62,37 +62,31 @@ #define OMAP_GET_EXT(x)    ((x)->ext_sta
+ #define OMAP_DEFAULT_CKEY (0x007f << 5)
+ #define OMAP_DEFAULT_BG (0x0000)
+ 
++struct omap_card_info;
++struct omap_screen_info;
++struct omap_plane_info;
++struct omap_video_info;
+ 
+-typedef struct _omapCardInfo OmapCardInfo;
+-typedef struct _omapScreenInfo OmapScreenInfo;
+-typedef struct _omapPlaneInfo OmapPlaneInfo;
+-typedef struct _omapPortPriv OmapPortPriv;
++#define get_omap_card_info(kd)        ((struct omap_card_info *) ((kd)->card->driver))
++#define get_omap_screen_info(kd)      ((struct omap_screen_info *) ((kd)->screen->driver))
++#define get_omap_video_info(omaps, n) ((struct omap_video_info *) ((omaps)->xv_adaptors->pPortPrivates[n].ptr))
+ 
+-#define getOmapCardInfo(kd)      ((OmapCardInfo *) ((kd)->card->driver))
+-#define omapCardInfo(kd)         OmapCardInfo *omapc = getOmapCardInfo(kd)
+-
+-#define getOmapScreenInfo(kd)    ((OmapScreenInfo *) ((kd)->screen->driver))
+-#define omapScreenInfo(kd)       OmapScreenInfo *omaps = getOmapScreenInfo(kd)
+-
+-#define getOmapPortPriv(omaps, n) ((OmapPortPriv *) ((omaps)->xv_adaptors->pPortPrivates[n].ptr))
+-#define omapPortPriv(omaps, n)    OmapPortPriv *pPortPriv = getOmapPortPriv(omaps, n)
+-
+-typedef enum omapPlaneType {
++enum omap_plane_type {
+     OMAP_PLANE_BASE,
+     OMAP_PLANE_OVERLAY,
+-} OmapPlaneType;
++};
+ 
+-typedef enum omapPlaneState {
++enum omap_plane_state {
+     OMAP_STATE_STOPPED,
+     OMAP_STATE_GRABBED,
+     OMAP_STATE_ACTIVE,
+-} OmapPlaneState;
++};
+ 
+-struct _omapPlaneInfo {
++struct omap_plane_info {
+     /* Unique identifier. */
+     int id;
+ 
+-    OmapPlaneType type;
++    enum omap_plane_type type;
+ 
+     /* Intrinsic properties of the plane. */
+     char *filename;
+@@ -105,7 +99,7 @@ struct _omapPlaneInfo {
+ 
+     /* Whether or not the plane is enabled.  If a plane is not active and
+      * not dirty, it can be restarted without being reconfigured. */
+-    OmapPlaneState state;
++    enum omap_plane_state state;
+ 
+     /* Do we need to set the plane up again? */
+     int dirty;
+@@ -136,20 +130,20 @@ struct _omapPlaneInfo {
+     int frames_since;
+ 
+     /* Pointer back to our base screen. */
+-    struct _omapScreenInfo *omaps;
++    struct omap_screen_info *omaps;
+ 
+-    struct _omapPlaneInfo *next;
++    struct omap_plane_info *next;
+ };
+ 
+-struct _omapCardInfo {
+-    OmapPlaneInfo *planes;
++struct omap_card_info {
++    struct omap_plane_info *planes;
+ 
+     /* The mode which was set at startup. */
+     int orig_width, orig_height, orig_bpp;
+ };
+ 
+-struct _omapScreenInfo {
+-    OmapCardInfo *omapc;
++struct omap_screen_info {
++    struct omap_card_info *omapc;
+     KdScreenInfo *screen;
+ 
+     /* Number of updates kicked from the timer. */
+@@ -162,7 +156,7 @@ struct _omapScreenInfo {
+     int individual_updates;
+ 
+     /* Pointer to our base plane. */
+-    OmapPlaneInfo *plane;
++    struct omap_plane_info *plane;
+ 
+     /* The current damaged area. */
+     BoxRec dirty_area;
+@@ -190,13 +184,13 @@ #else
+ #endif
+ };
+ 
+-struct _omapPortPriv {
++struct omap_video_info {
+     /* General overlay information */
+     RegionRec clip;
+-    OmapScreenInfo *omaps;
++    struct omap_screen_info *omaps;
+ 
+     /* Plane currently in use. */
+-    OmapPlaneInfo *plane;
++    struct omap_plane_info *plane;
+ 
+     /* Are we downscaling? */
+     Bool hscale, vscale;
+@@ -218,27 +212,23 @@ struct _omapPortPriv {
+ };
+ 
+ 
+-Bool omapDrawInit(ScreenPtr pScreen);
+-void omapDrawEnable(ScreenPtr pScreen);
+-void omapDrawDisable(ScreenPtr pScreen);
+-void omapDrawFini(ScreenPtr pScreen);
+-
+-Bool omapCreateDrawResources(OmapScreenInfo *omaps);
+-void omapRemoveDrawResources(OmapScreenInfo *omaps);
++int omap_screen_resources_create(struct omap_screen_info *omaps);
++void omap_screen_resources_destroy(struct omap_screen_info *omaps);
++void omap_screen_update_all(struct omap_screen_info *omaps, int force_all);
+ 
+-OmapPlaneInfo *omapSetupPlane(OmapCardInfo *omapc, char *filename,
+-                              OmapPlaneType type);
+-void omapPlaneDestroy(OmapPlaneInfo *plane);
+-int omapPlaneEnable(OmapPlaneInfo *plane);
+-void omapPlaneDisable(OmapPlaneInfo *plane);
++struct omap_plane_info *omap_plane_create(struct omap_card_info *omapc,
++                                          char *filename,
++                                          enum omap_plane_type type);
++void omap_plane_destroy(struct omap_plane_info *plane);
++int omap_plane_enable(struct omap_plane_info *plane);
++void omap_plane_disable(struct omap_plane_info *plane);
++void omap_plane_flush(struct omap_plane_info *plane, xRectangle *area);
+ 
+-void omapSyncEngine(OmapCardInfo *omapc);
+-void omapForceFullScreenUpdate(OmapScreenInfo *omaps, Bool force_all);
+-void omapFlushDamage(OmapPlaneInfo *plane, xRectangle *area);
++void omap_card_sync(struct omap_card_info *omapc);
+ 
+-Bool omapVideoInit(OmapScreenInfo *omaps);
+-void omapVideoFini(OmapScreenInfo *omaps);
++int omap_video_init(struct omap_screen_info *omaps);
++void omap_video_fini(struct omap_screen_info *omaps);
+ 
+-extern KdCardFuncs omapFuncs;
++extern KdCardFuncs omap_funcs;
+ 
+ #endif /* _OMAP_H_ */
+diff --git a/hw/kdrive/omap/omap_draw.c b/hw/kdrive/omap/omap_draw.c
+index e20a923..917980a 100644
+--- a/hw/kdrive/omap/omap_draw.c
++++ b/hw/kdrive/omap/omap_draw.c
+@@ -53,9 +53,10 @@ #ifdef XSP
+ #include "spext.h"
+ #endif
+ 
+-void omapSyncEngine(OmapCardInfo *omapc)
++void
++omap_card_sync(struct omap_card_info *omapc)
+ {
+-    OmapPlaneInfo *plane;
++    struct omap_plane_info *plane;
+ 
+     for (plane = omapc->planes; plane; plane = plane->next) {
+         if (plane->type == OMAP_PLANE_BASE) {
+@@ -65,7 +66,8 @@ void omapSyncEngine(OmapCardInfo *omapc)
+     }
+ }
+ 
+-static void _X_INLINE omapResetDamage(OmapScreenInfo *omaps)
++static void _X_INLINE
++reset_damage(struct omap_screen_info *omaps)
+ {
+     omaps->dirty_area.x1 = MAXSHORT;
+     omaps->dirty_area.y1 = MAXSHORT;
+@@ -73,13 +75,15 @@ static void _X_INLINE omapResetDamage(Om
+     omaps->dirty_area.y2 = 0;
+ }
+ 
+-static int _X_INLINE omapRegionIsNull(OmapScreenInfo *omaps)
++static int _X_INLINE
++region_is_null(struct omap_screen_info *omaps)
+ {
+     return (omaps->dirty_area.x1 == MAXSHORT && omaps->dirty_area.x2 == 0 &&
+             omaps->dirty_area.y1 == MAXSHORT && omaps->dirty_area.y2 == 0);
+ }
+ 
+-static int _X_INLINE omapRectsIntersect(xRectangle *box1, xRectangle *box2)
++static int _X_INLINE
++rects_intersect(xRectangle *box1, xRectangle *box2)
+ {
+     return !(box2->x + box2->height <= box1->x ||
+              box2->x >= box1->x + box1->height ||
+@@ -87,7 +91,8 @@ static int _X_INLINE omapRectsIntersect(
+              box2->y >= box1->y + box1->height);
+ }
+ 
+-static void _X_INLINE omapDisplayBox(OmapScreenInfo *omaps, BoxPtr box)
++static void _X_INLINE
++push_box(struct omap_screen_info *omaps, BoxPtr box)
+ {
+     xRectangle rect;
+ 
+@@ -99,25 +104,19 @@ static void _X_INLINE omapDisplayBox(Oma
+ #ifdef XSP
+     XSPCheckDamage(omaps->screen->pScreen->myNum, &rect);
+ #endif
+-    omapFlushDamage(omaps->plane, &rect);
++    omap_plane_flush(omaps->plane, &rect);
+ }
+ 
+-static void omapUpdateScreen(OmapScreenInfo *omaps)
++static void
++update_screen(struct omap_screen_info *omaps)
+ {
+     BoxPtr tmp;
+     int i;
+ 
+-    if (omapRegionIsNull(omaps))
++    if (region_is_null(omaps))
+         return;
+ 
+     if (!omaps->block_updates) {
+-#ifdef SUPER_DEBUG
+-        if (omaps->video_region && REGION_NOTEMPTY(omaps->screen->pScreen, omaps->video_region)) {
+-            tmp = REGION_EXTENTS(omaps->screen->pScreen, omaps->video_region);
+-            ErrorF("region: video extents are (%d, %d) to (%d, %d), dirty area is (%d, %d) to (%d, %d)\n", tmp->x1, tmp->y1, tmp->x2, tmp->y2, omaps->dirty_area.x1, omaps->dirty_area.y1, omaps->dirty_area.x2, omaps->dirty_area.y2);
+-        }
+-#endif
+-
+         /* Remove the video region from our active area. */
+         if (omaps->video_region &&
+             REGION_NOTEMPTY(omaps->screen->pScreen, omaps->video_region) &&
+@@ -125,51 +124,44 @@ #endif
+                            &omaps->dirty_area)) {
+             REGION_INIT(omaps->screen->pScreen, omaps->tmp_region,
+                         &omaps->dirty_area, 1);
+-#ifdef SUPER_DEBUG
+-            tmp = REGION_EXTENTS(omaps->screen->pScreen, omaps->tmp_region);
+-            ErrorF("region subtraction: old region was (%d, %d) to (%d, %d)\n", tmp->x1, tmp->y1, tmp->x2, tmp->y2);
+-#endif
+             REGION_SUBTRACT(omaps->screen->pScreen, omaps->tmp_region,
+                             omaps->tmp_region, omaps->video_region);
+             tmp = REGION_RECTS(omaps->tmp_region);
+-            for (i = 0; i < REGION_NUM_RECTS(omaps->tmp_region); i++, tmp++) {
+-#ifdef SUPER_DEBUG
+-                ErrorF("                    new region is (%d, %d) to (%d, %d)\n", tmp->x1, tmp->y1, tmp->x2, tmp->y2);
+-#endif
+-                omapDisplayBox(omaps, tmp);
+-            }
++            for (i = 0; i < REGION_NUM_RECTS(omaps->tmp_region); i++, tmp++)
++                push_box(omaps, tmp);
+             REGION_EMPTY(omaps->screen->pScreen, omaps->tmp_region);
+         }
+         else {
+-            omapDisplayBox(omaps, &omaps->dirty_area);
++            push_box(omaps, &omaps->dirty_area);
+         }
+ 
+     }
+ 
+-    omapResetDamage(omaps);
++    reset_damage(omaps);
+ }
+ 
+ /**
+  * Update the entire screen.  If force_all is not set, then refuse to update
+  * currently-playing video areas.
+  */
+-void omapForceFullScreenUpdate(OmapScreenInfo *omaps, Bool force_all)
++void
++omap_screen_update_all(struct omap_screen_info *omaps, Bool force_all)
+ {
+     if (force_all) {
+-        omapFlushDamage(omaps->plane, NULL);
+-        omapResetDamage(omaps);
++        omap_plane_flush(omaps->plane, NULL);
++        reset_damage(omaps);
+     }
+     else {
+         omaps->dirty_area.x1 = 0;
+         omaps->dirty_area.x2 = omaps->screen->width;
+         omaps->dirty_area.y1 = 0;
+         omaps->dirty_area.y2 = omaps->screen->height;
+-        omapUpdateScreen(omaps);
++        update_screen(omaps);
+     }
+ }
+ 
+-static void _X_INLINE omapAccumulateDamage(OmapScreenInfo *omaps,
+-                                           RegionPtr region)
++static void _X_INLINE
++accumulate_damage(struct omap_screen_info *omaps, RegionPtr region)
+ {
+     int i = 0;
+     BoxPtr box = REGION_RECTS(region);
+@@ -185,16 +177,17 @@ static void _X_INLINE omapAccumulateDama
+             omaps->dirty_area.y2 = box->y2;
+ 
+         if (omaps->individual_updates)
+-            omapUpdateScreen(omaps);
++            update_screen(omaps);
+ 
+         box++;
+     }
+ }
+ 
+ #ifdef PROFILE_ME_HARDER
+-static void omapVideoStats(OmapScreenInfo *omaps, CARD32 time)
++static void
++video_stats(struct omap_screen_info *omaps, CARD32 time)
+ {
+-    OmapPlaneInfo *plane;
++    struct omap_plane_info *plane;
+ 
+     for (plane = omaps->omapc->planes; plane; plane = plane->next) {
+         if (plane->frames) {
+@@ -211,19 +204,20 @@ static void omapVideoStats(OmapScreenInf
+ }
+ #endif
+ 
+-static CARD32 omapDamageTimer(OsTimerPtr timer, CARD32 time, pointer arg)
++static CARD32
++damage_timer(OsTimerPtr timer, CARD32 time, pointer arg)
+ {
+-    OmapScreenInfo *omaps = arg;
++    struct omap_screen_info *omaps = arg;
+     int needUpdate = 0;
+     RegionPtr region = NULL;
+ #ifdef XSP
+-    xspScrPrivPtr pScrPriv = NULL;
++    xspScrPrivPtr xsp_priv = NULL;
+ #endif
+ 
+ #ifdef XSP
+     if (xspScrPrivateIndex > 0) {
+-        pScrPriv = xspGetScrPriv(omaps->screen->pScreen);
+-        if (pScrPriv && pScrPriv->dsp_enabled)
++        xsp_priv = xspGetScrPriv(omaps->screen->pScreen);
++        if (xsp_priv && xsp_priv->dsp_enabled)
+             needUpdate = 1;
+     }
+ #endif
+@@ -237,21 +231,21 @@ #endif
+ #ifdef PROFILE_ME_HARDER
+     omaps->updates++;
+     if (omaps->updates > (5000 / OMAP_UPDATE_TIME))
+-        omapVideoStats(omaps, time);
++        video_stats(omaps, time);
+ #endif
+ 
+     region = DamageRegion(omaps->damage);
+     if (REGION_NOTEMPTY(omaps->screen->pScreen, region)) {
+-        omapAccumulateDamage(omaps, region);
++        accumulate_damage(omaps, region);
+         DamageEmpty(omaps->damage);
+     }
+ 
+-    if (!omapRegionIsNull(omaps))
++    if (!region_is_null(omaps))
+         needUpdate = 1;
+ 
+     if (needUpdate) {
+         omaps->empty_updates = 0;
+-        omapUpdateScreen(omaps);
++        update_screen(omaps);
+     }
+     else {
+         omaps->empty_updates++;
+@@ -271,51 +265,54 @@ #endif
+     }
+ }
+ 
+-static int omapUpdatePixelDoubling(OmapScreenInfo *omaps, int enable)
++static int
++update_pixel_doubling(struct omap_screen_info *omaps, int enable)
+ {
+     DebugF("omapUpdatePixelDoubling: pixel doubling is %d\n", enable);
+     omaps->pixel_doubled = enable;
+-    omapForceFullScreenUpdate(omaps, TRUE);
++    omap_screen_update_all(omaps, TRUE);
+ 
+     return Success;
+ }
+ 
+ #ifdef XSP
+-int omapXSPEvent(int event, int screen, void *closure)
++static int
++xsp_event(int event, int screen, void *closure)
+ {
+-    OmapScreenInfo *omaps = closure;
++    struct omap_screen_info *omaps = closure;
+ 
+     switch (event) {
+     case XSP_EVENT_PIXEL_DOUBLE_EN:
+-        return omapUpdatePixelDoubling(omaps, 1);
++        return update_pixel_doubling(omaps, 1);
+     case XSP_EVENT_PIXEL_DOUBLE_DIS:
+-        return omapUpdatePixelDoubling(omaps, 0);
++        return update_pixel_doubling(omaps, 0);
+     default:
+         return BadMatch;
+     }
+ }
+ #endif
+ 
+-static void omapDamageReport(DamagePtr damage, RegionPtr pRegion,
+-                             void *closure)
++static void
++damage_report_hook(DamagePtr damage, RegionPtr pRegion, void *closure)
+ {
+-    OmapScreenInfo *omaps = closure;
++    struct omap_screen_info *omaps = closure;
+ 
+     if (!omaps->timer_active) {
+         omaps->timer_active = 1;
+-        TimerSet(NULL, 0, 1, omapDamageTimer, omaps);
++        TimerSet(NULL, 0, 1, damage_timer, omaps);
+     }
+ }
+ 
+-static void omapDamageDestroy(DamagePtr damage, void *closure)
++static void damage_destroy_hook(DamagePtr damage, void *closure)
+ {
+-    OmapScreenInfo *omaps = closure;
++    struct omap_screen_info *omaps = closure;
+ 
+     omaps->damage = NULL;
+     omaps->pixmap = NULL;
+ }
+ 
+-Bool omapCreateDrawResources(OmapScreenInfo *omaps)
++Bool
++omap_screen_resources_create(struct omap_screen_info *omaps)
+ {
+     PixmapPtr pixmap;
+ 
+@@ -324,7 +321,7 @@ Bool omapCreateDrawResources(OmapScreenI
+     /* Set up our damage listener to update the window by hand. */
+     omaps->timer_active = 0;
+     omaps->empty_updates = 0;
+-    omaps->damage = DamageCreate(omapDamageReport, omapDamageDestroy,
++    omaps->damage = DamageCreate(damage_report_hook, damage_destroy_hook,
+                                  DamageReportNonEmpty, TRUE,
+                                  omaps->screen->pScreen, omaps);
+     if (!omaps->damage)
+@@ -333,13 +330,13 @@ Bool omapCreateDrawResources(OmapScreenI
+     if (!pixmap)
+         FatalError("omapCreateDrawResources: couldn't get screen pixmap\n");
+     omaps->pixmap = pixmap;
+-    omapResetDamage(omaps);
++    reset_damage(omaps);
+     DamageRegister(&pixmap->drawable, omaps->damage);
+ 
+     omaps->pixel_doubled = 0;
+     omaps->individual_updates = 0;
+ #ifdef XSP
+-    XSPSetEventCallback(omaps->screen->pScreen->myNum, omapXSPEvent, omaps);
++    XSPSetEventCallback(omaps->screen->pScreen->myNum, xsp_event, omaps);
+ #endif
+ 
+     omaps->tmp_region = REGION_CREATE(omaps->screen->pScreen, NullBox, 0);
+@@ -351,7 +348,8 @@ #endif
+     return TRUE;
+ }
+ 
+-void omapRemoveDrawResources(OmapScreenInfo *omaps)
++void
++omap_screen_resources_destroy(struct omap_screen_info *omaps)
+ {
+     ENTER();
+ 
+diff --git a/hw/kdrive/omap/omap_plane.c b/hw/kdrive/omap/omap_plane.c
+index 69e3c70..6ad4239 100644
+--- a/hw/kdrive/omap/omap_plane.c
++++ b/hw/kdrive/omap/omap_plane.c
+@@ -35,15 +35,16 @@ #include <sys/mman.h>
+ #include "kdrive.h"
+ #include "omap.h"
+ 
+-OmapPlaneInfo *omapSetupPlane(OmapCardInfo *omapc, char *name,
+-                              OmapPlaneType type)
++struct omap_plane_info *
++omap_plane_create(struct omap_card_info *omapc, char *name,
++                  enum omap_plane_type type)
+ {
+-    OmapPlaneInfo *plane = NULL;
+-    OmapPlaneInfo **prev = NULL;
++    struct omap_plane_info *plane = NULL;
++    struct omap_plane_info **prev = NULL;
+     struct fb_var_screeninfo var;
+-    int fd;
+     struct omapfb_caps caps;
+     struct omapfb_mem_info mem_info;
++    int fd;
+ 
+     fd = open(name, O_RDWR);
+     if (fd < 0) {
+@@ -57,7 +58,7 @@ OmapPlaneInfo *omapSetupPlane(OmapCardIn
+         return NULL;
+     }
+ 
+-    plane = xcalloc(1, sizeof(OmapPlaneInfo));
++    plane = xcalloc(1, sizeof(*plane));
+     if (!plane) {
+         ErrorF("omapSetupPlane: couldn't allocate plane\n");
+         return NULL;
+@@ -121,16 +122,18 @@ bail:
+     return NULL;
+ }
+ 
+-void omapPlaneDestroy(OmapPlaneInfo *plane)
++void
++omap_plane_destroy(struct omap_plane_info *plane)
+ {
+     if (plane->state >= OMAP_STATE_ACTIVE)
+-        omapPlaneDisable(plane);
++        omap_plane_disable(plane);
+ 
+     close(plane->fd);
+     xfree(plane);
+ }
+ 
+-void omapFlushDamage(OmapPlaneInfo *plane, xRectangle *area)
++void
++omap_plane_flush(struct omap_plane_info *plane, xRectangle *area)
+ {
+     struct omapfb_update_window update_window = { 0, };
+     int is_base = (plane->type == OMAP_PLANE_BASE);
+@@ -227,7 +230,8 @@ #endif
+     }
+ }
+ 
+-static int omap_calc_mem_size(OmapPlaneInfo *plane_info)
++static int
++calc_mem_size(struct omap_plane_info *plane_info)
+ {
+     if (plane_info->type == OMAP_PLANE_OVERLAY &&
+         OMAP_GET_EXT(plane_info) == OMAP_EXT_MIGRATED)
+@@ -236,7 +240,8 @@ static int omap_calc_mem_size(OmapPlaneI
+         return plane_info->dst_area.width * plane_info->dst_area.height * 2;
+ }
+ 
+-static int omap_realloc_mem(OmapPlaneInfo *plane_info)
++static int
++realloc_plane(struct omap_plane_info *plane_info)
+ {
+     struct omapfb_mem_info mem_info;
+ 
+@@ -247,7 +252,7 @@ #else
+     /* Joyous kernel bug doesn't let us ... */
+     mem_info.type = OMAPFB_MEMTYPE_SDRAM;
+ #endif
+-    mem_info.size = omap_calc_mem_size(plane_info);
++    mem_info.size = calc_mem_size(plane_info);
+ 
+     if (ioctl(plane_info->fd, OMAPFB_SETUP_MEM, &mem_info) != 0) {
+ #if 0
+@@ -261,7 +266,8 @@ #endif
+     return 1;
+ }
+ 
+-int omapPlaneEnable(OmapPlaneInfo *plane_info)
++int
++omap_plane_enable(struct omap_plane_info *plane_info)
+ {
+     struct fb_var_screeninfo var;
+     struct fb_fix_screeninfo fix;
+@@ -274,7 +280,7 @@ int omapPlaneEnable(OmapPlaneInfo *plane
+     const int is_migrated = (OMAP_GET_EXT(plane_info) == OMAP_EXT_MIGRATED);
+     int mem_allocated = 0;
+ 
+-    omapSyncEngine(plane_info->omaps->omapc);
++    omap_card_sync(plane_info->omaps->omapc);
+ 
+     if (!is_base) {
+         if (ioctl(plane_info->fd, OMAPFB_QUERY_MEM, &mem_info) != 0) {
+@@ -282,8 +288,8 @@ int omapPlaneEnable(OmapPlaneInfo *plane
+             return 0;
+         }
+ 
+-        if (omap_calc_mem_size(plane_info) > mem_info.size) {
+-            if (!omap_realloc_mem(plane_info)) {
++        if (calc_mem_size(plane_info) > mem_info.size) {
++            if (!realloc_plane(plane_info)) {
+                 ErrorF("omapPlaneEnable: couldn't grow mem\n");
+                 return 0;
+             }
+@@ -327,7 +333,7 @@ int omapPlaneEnable(OmapPlaneInfo *plane
+ 
+     if (!is_base) {
+         if (!mem_allocated) {
+-            if (!omap_realloc_mem(plane_info)) {
++            if (!realloc_plane(plane_info)) {
+                 ErrorF("omapPlaneEnable: couldn't shrink mem\n");
+                 return 0;
+             }
+@@ -395,7 +401,7 @@ int omapPlaneEnable(OmapPlaneInfo *plane
+ 
+     plane_info->dirty = 0;
+ 
+-    omapSyncEngine(plane_info->omaps->omapc);
++    omap_card_sync(plane_info->omaps->omapc);
+ 
+     return 1;
+ 
+@@ -405,7 +411,8 @@ bail:
+     return 0;
+ }
+ 
+-void omapPlaneDisable(OmapPlaneInfo *plane_info)
++void
++omap_plane_disable(struct omap_plane_info *plane_info)
+ {
+     struct omapfb_plane_info kplane_info;
+     struct omapfb_mem_info mem_info;
+@@ -413,7 +420,7 @@ void omapPlaneDisable(OmapPlaneInfo *pla
+     if (plane_info->type == OMAP_PLANE_BASE)
+         FatalError("attempting to disable base plane\n");
+ 
+-    omapSyncEngine(plane_info->omaps->omapc);
++    omap_card_sync(plane_info->omaps->omapc);
+ 
+     if (plane_info->fb)
+         munmap(plane_info->fb, plane_info->fb_size);
+@@ -449,5 +456,5 @@ void omapPlaneDisable(OmapPlaneInfo *pla
+ 
+ bail:
+     /* Give it a chance to take. */
+-    omapSyncEngine(plane_info->omaps->omapc);
++    omap_card_sync(plane_info->omaps->omapc);
+ }
+diff --git a/hw/kdrive/omap/omap_video.c b/hw/kdrive/omap/omap_video.c
+index 9b09aad..600d0c1 100644
+--- a/hw/kdrive/omap/omap_video.c
++++ b/hw/kdrive/omap/omap_video.c
+@@ -40,56 +40,51 @@ #include <X11/extensions/Xv.h>
+ #include "fourcc.h"
+ 
+ #define MAKE_ATOM(a) MakeAtom(a, sizeof(a) - 1, TRUE)
++#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
+ 
+ #ifndef max
+ #define max(x, y) (((x) >= (y)) ? (x) : (y))
+ #endif
+ 
+-static KdVideoEncodingRec DummyEncoding[] = {
++static KdVideoEncodingRec dummy_encoding[] = {
+     /* Max width and height are filled in later. */
+     { 0, "XV_IMAGE", -1, -1, { 1, 1 } },
+ };
+ 
+-static KdImageRec Images[] = {
++static KdImageRec xv_images[] = {
+     XVIMAGE_YUY2, /* OMAPFB_COLOR_YUY422 */
+     XVIMAGE_UYVY, /* OMAPFB_COLOR_YUV422 */
+     XVIMAGE_I420, /* OMAPFB_COLOR_YUV420 */
+     XVIMAGE_YV12, /* OMAPFB_COLOR_YUV420 */
+ };
+ 
+-#define NUM_IMAGES (sizeof(Images) / sizeof(Images[0]))
+-
+-static KdVideoFormatRec Formats[] = {
++static KdVideoFormatRec xv_formats[] = {
+     { 16, TrueColor },
+ };
+ 
+-#define NUM_FORMATS (sizeof(Formats) / sizeof(Formats[0]))
+-
+-static KdAttributeRec Attributes[] = {
++static KdAttributeRec xv_attributes[] = {
+     { XvSettable | XvGettable, OMAP_VSYNC_NONE, OMAP_VSYNC_FORCE,
+       "XV_OMAP_VSYNC" },
+     { XvSettable | XvGettable, 0, 0xffff, "XV_COLORKEY" },
+ };
+ 
+-#define NUM_ATTRIBUTES (sizeof(Attributes) / sizeof(Attributes[0]))
+-
+-static Atom xvColorKey, xvVSync;
++static Atom xv_colorkey, xv_vsync;
+ 
+-static void omapVideoStop(KdScreenInfo *screen, pointer data, Bool exit);
++static void omap_video_stop(KdScreenInfo *screen, pointer data, Bool exit);
+ 
+ /**
+  * Check if plane attributes have changed.
+  */
+ static _X_INLINE int
+-omapPlaneIsDirty(OmapPortPriv *port_info, int id, int src_w, int src_h,
+-                 int dst_x, int dst_y, int dst_w, int dst_h)
++is_dirty(struct omap_video_info *video_info, int id, int src_w, int src_h,
++         int dst_x, int dst_y, int dst_w, int dst_h)
+ {
+-    const OmapPlaneInfo *plane = port_info->plane;
++    const struct omap_plane_info *plane = video_info->plane;
+ 
+-    if (plane->dirty || port_info->fourcc != id || port_info->src_w != src_w ||
+-        port_info->src_h != src_h || port_info->dst_x != dst_x ||
+-        port_info->dst_y != dst_y || port_info->dst_w != dst_w ||
+-        port_info->dst_h != dst_h || plane->ext_state & OMAP_EXT_PENDING)
++    if (plane->dirty || video_info->fourcc != id || video_info->src_w != src_w ||
++        video_info->src_h != src_h || video_info->dst_x != dst_x ||
++        video_info->dst_y != dst_y || video_info->dst_w != dst_w ||
++        video_info->dst_h != dst_h || plane->ext_state & OMAP_EXT_PENDING)
+         return 1;
+     else
+         return 0;
+@@ -99,55 +94,57 @@ omapPlaneIsDirty(OmapPortPriv *port_info
+  * Since we can have differing formats in the framebuffer, we want to
+  * block updates for a couple of frames.
+  */
+-static void omapUnblockUpdates(OmapPortPriv *port_info)
++static void
++unblock_updates(struct omap_video_info *video_info)
+ {
+-    if (port_info->timer) {
+-        TimerCancel(port_info->timer);
+-        port_info->timer = NULL;
++    if (video_info->timer) {
++        TimerCancel(video_info->timer);
++        video_info->timer = NULL;
+     }
+ 
+-    port_info->omaps->block_updates &= ~(1 << port_info->plane->id);
++    video_info->omaps->block_updates &= ~(1 << video_info->plane->id);
+ }
+ 
+-static void omapEmptyClip(OmapPortPriv *port_info)
++static void
++empty_clip(struct omap_video_info *video_info)
+ {
+-    if (REGION_NOTEMPTY(port_info->omaps->screen->pScreen, &port_info->clip)) {
+-        if (port_info->drawable)
+-            KXVPaintRegion(port_info->drawable, &port_info->clip,
+-                           port_info->omaps->screen->pScreen->blackPixel);
+-        port_info->drawable = NULL;
+-        REGION_SUBTRACT(port_info->omaps->screen->pScreen,
+-                        port_info->omaps->video_region,
+-                        port_info->omaps->video_region, &port_info->clip);
+-        REGION_EMPTY(port_info->omaps->screen->pScreen, &port_info->clip);
+-        omapSyncEngine(port_info->omaps->omapc);
++    if (REGION_NOTEMPTY(video_info->omaps->screen->pScreen, &video_info->clip)) {
++        if (video_info->drawable)
++            KXVPaintRegion(video_info->drawable, &video_info->clip,
++                           video_info->omaps->screen->pScreen->blackPixel);
++        video_info->drawable = NULL;
++        REGION_SUBTRACT(video_info->omaps->screen->pScreen,
++                        video_info->omaps->video_region,
++                        video_info->omaps->video_region, &video_info->clip);
++        REGION_EMPTY(video_info->omaps->screen->pScreen, &video_info->clip);
++        omap_card_sync(video_info->omaps->omapc);
+     }
+ }
+ 
+ static void
+-omapDisplayFrame(KdScreenInfo *screen, OmapPortPriv *port_info)
++push_frame(KdScreenInfo *screen, struct omap_video_info *video_info)
+ {
+ 
+     /* If updates have been blocked because of migration, we need to
+      * ensure that the colourkey has been correctly painted, and
+      * the migration has been completed, before we force an
+      * update. */
+-    if (port_info->plane->ext_state & OMAP_EXT_PENDING) {
++    if (video_info->plane->ext_state & OMAP_EXT_PENDING) {
+         DebugF("omapDisplayFrame: plane %d pending migration\n",
+-               port_info->plane->id);
+-        omapSyncEngine(port_info->omaps->omapc);
++               video_info->plane->id);
++        omap_card_sync(video_info->omaps->omapc);
+     }
+-    else if (port_info->omaps->block_updates & (1 << port_info->plane->id)) {
+-        omapSyncEngine(port_info->omaps->omapc);
++    else if (video_info->omaps->block_updates & (1 << video_info->plane->id)) {
++        omap_card_sync(video_info->omaps->omapc);
+         DebugF("omapDisplayFrame: unblocking updates for %d\n",
+-               port_info->plane->id);
+-        omapUnblockUpdates(port_info);
++               video_info->plane->id);
++        unblock_updates(video_info);
+ 
+-        if (!port_info->omaps->block_updates)
+-            omapForceFullScreenUpdate(port_info->omaps, FALSE);
++        if (!video_info->omaps->block_updates)
++            omap_screen_update_all(video_info->omaps, FALSE);
+     }
+     else {
+-        omapFlushDamage(port_info->plane, NULL);
++        omap_plane_flush(video_info->plane, NULL);
+     }
+ }
+ 
+@@ -156,124 +153,127 @@ omapDisplayFrame(KdScreenInfo *screen, O
+  * region.  Don't set either to FALSE unless you know what you're doing.
+  */
+ static void
+-_omapStopVideo(OmapPortPriv *port_info, Bool clearmem)
++stop_video(struct omap_video_info *video_info, Bool clearmem)
+ {
+     int is_migrated;
+ 
+-    if ((OMAP_GET_EXT(port_info->plane) == OMAP_EXT_MIGRATED ||
+-        port_info->plane->ext_state == (OMAP_EXT_CANDIDATE | OMAP_EXT_PENDING)))
++    if ((OMAP_GET_EXT(video_info->plane) == OMAP_EXT_MIGRATED ||
++        video_info->plane->ext_state == (OMAP_EXT_CANDIDATE | OMAP_EXT_PENDING)))
+         is_migrated = 1;
+     else
+         is_migrated = 0;
+ 
+-    omapSyncEngine(port_info->omaps->omapc);
++    omap_card_sync(video_info->omaps->omapc);
+ 
+-    if (is_migrated || port_info->visibility >= VisibilityFullyObscured)
+-        omapEmptyClip(port_info);
++    if (is_migrated || video_info->visibility >= VisibilityFullyObscured)
++        empty_clip(video_info);
+ 
+     if (clearmem)
+-        bzero(port_info->plane->fb, port_info->plane->fb_size);
++        bzero(video_info->plane->fb, video_info->plane->fb_size);
+ 
+-    if (port_info->plane->state >= OMAP_STATE_ACTIVE)
+-        omapPlaneDisable(port_info->plane);
++    if (video_info->plane->state >= OMAP_STATE_ACTIVE)
++        omap_plane_disable(video_info->plane);
+ 
+-    port_info->omaps->individual_updates &= ~(1 << port_info->plane->id);
+-    port_info->plane->state = OMAP_STATE_GRABBED;
++    video_info->omaps->individual_updates &= ~(1 << video_info->plane->id);
++    video_info->plane->state = OMAP_STATE_GRABBED;
+ 
+     if (is_migrated) {
+         DebugF("_omapStopVideo: forcing full-screen update on %d (non-exit)\n",
+-               port_info->plane->id);
+-        omapForceFullScreenUpdate(port_info->omaps, TRUE);
++               video_info->plane->id);
++        omap_screen_update_all(video_info->omaps, TRUE);
+     }
+ 
+-    DebugF("_omapStopVideo: stopped plane %d\n", port_info->plane->id);
++    DebugF("_omapStopVideo: stopped plane %d\n", video_info->plane->id);
+ }
+ 
+-static CARD32 omapBlockUpdatesTimer(OsTimerPtr timer, CARD32 now, pointer data)
++static CARD32
++block_updates_timer(OsTimerPtr timer, CARD32 now, pointer data)
+ {
+-    OmapPortPriv *port_info = (OmapPortPriv *) data;
++    struct omap_video_info *video_info = data;
+ 
+     DebugF("omapBlockUpdatesTimer: timeout on plane %d, ext state %x\n",
+-           port_info->plane->id, port_info->plane->ext_state);
+-    port_info->timer = NULL;
++           video_info->plane->id, video_info->plane->ext_state);
++    video_info->timer = NULL;
+ 
+-    omapUnblockUpdates(port_info);
++    unblock_updates(video_info);
+ 
+-    switch (port_info->plane->ext_state) {
++    switch (video_info->plane->ext_state) {
+     case OMAP_EXT_NONE:
+         break;
+ 
+     case OMAP_EXT_MIGRATED:
+-        omapDisplayFrame(port_info->omaps->screen, port_info);
+-        omapForceFullScreenUpdate(port_info->omaps, FALSE);
++        push_frame(video_info->omaps->screen, video_info);
++        omap_screen_update_all(video_info->omaps, FALSE);
+         break;
+ 
+     case (OMAP_EXT_CANDIDATE | OMAP_EXT_PENDING):
+     case (OMAP_EXT_MIGRATED | OMAP_EXT_PENDING):
+-        omapEmptyClip(port_info);
+-        _omapStopVideo(port_info, TRUE);
++        empty_clip(video_info);
++        stop_video(video_info, TRUE);
+     default:
+-        omapForceFullScreenUpdate(port_info->omaps, TRUE);
++        omap_screen_update_all(video_info->omaps, TRUE);
+         break;
+     }
+ 
+     return 0;
+ }
+ 
+-static void omapBlockUpdates(OmapPortPriv *port_info)
++static void
++block_updates(struct omap_video_info *video_info)
+ {
+-    if (port_info->timer)
+-        TimerCancel(port_info->timer);
+-    port_info->omaps->block_updates |= (1 << port_info->plane->id);
+-    port_info->timer = TimerSet(NULL, 0, 2000, omapBlockUpdatesTimer,
+-                                (pointer) port_info);
++    if (video_info->timer)
++        TimerCancel(video_info->timer);
++    video_info->omaps->block_updates |= (1 << video_info->plane->id);
++    video_info->timer = TimerSet(NULL, 0, 2000, block_updates_timer,
++                                (pointer) video_info);
+ }
+ 
+-static void omapCheckClip(OmapPortPriv *port_info)
++static void
++check_clip(struct omap_video_info *video_info)
+ {
+-    OmapPlaneInfo *tmp;
++    struct omap_plane_info *tmp;
+ 
+-    if (port_info->visibility == VisibilityUnobscured) {
+-        if (OMAP_GET_EXT(port_info->plane) == OMAP_EXT_CANDIDATE) {
++    if (video_info->visibility == VisibilityUnobscured) {
++        if (OMAP_GET_EXT(video_info->plane) == OMAP_EXT_CANDIDATE) {
+             /* There can only be one. */
+-            for (tmp = port_info->omaps->omapc->planes; tmp; tmp = tmp->next) {
++            for (tmp = video_info->omaps->omapc->planes; tmp; tmp = tmp->next) {
+                 if (OMAP_GET_EXT(tmp) == OMAP_EXT_MIGRATED) {
+                     DebugF("omapCheckClip: not migrating second candidate %d\n",
+-                           port_info->plane->id);
++                           video_info->plane->id);
+                     return;
+                 }
+             }
+ 
+             DebugF("omapCheckClip: migrating unclipped candidate %d\n",
+-                   port_info->plane->id);
+-            port_info->plane->ext_state = OMAP_EXT_MIGRATED | OMAP_EXT_PENDING;
+-            port_info->plane->dirty = TRUE;
++                   video_info->plane->id);
++            video_info->plane->ext_state = OMAP_EXT_MIGRATED | OMAP_EXT_PENDING;
++            video_info->plane->dirty = TRUE;
+             DebugF("omapCheckClip: blocking UI updates for %d\n",
+-                   port_info->plane->id);
+-            omapBlockUpdates(port_info);
++                   video_info->plane->id);
++            block_updates(video_info);
+         }
+     }
+     else {
+-        if (OMAP_GET_EXT(port_info->plane) == OMAP_EXT_MIGRATED) {
++        if (OMAP_GET_EXT(video_info->plane) == OMAP_EXT_MIGRATED) {
+             DebugF("omapCheckClip: migrating clipped video %d\n",
+-                   port_info->plane->id);
+-            port_info->plane->ext_state = OMAP_EXT_CANDIDATE | OMAP_EXT_PENDING;
+-            if (port_info->visibility == VisibilityPartiallyObscured) {
++                   video_info->plane->id);
++            video_info->plane->ext_state = OMAP_EXT_CANDIDATE | OMAP_EXT_PENDING;
++            if (video_info->visibility == VisibilityPartiallyObscured) {
+                 DebugF("omapCheckClip: blocking UI updates for %d\n",
+-                       port_info->plane->id);
+-                omapBlockUpdates(port_info);
++                       video_info->plane->id);
++                block_updates(video_info);
+             }
+             else {
+                 DebugF("omapCheckClip: not blocking updates for fully "
+-                       "obscured video %d\n", port_info->plane->id);
+-                omapUnblockUpdates(port_info);
++                       "obscured video %d\n", video_info->plane->id);
++                unblock_updates(video_info);
+                 
+-                omapEmptyClip(port_info);
++                empty_clip(video_info);
+             }
+-            port_info->plane->dirty = TRUE;
++            video_info->plane->dirty = TRUE;
+         }
+-        else if (port_info->visibility >= VisibilityFullyObscured) {
+-            omapEmptyClip(port_info);
++        else if (video_info->visibility >= VisibilityFullyObscured) {
++            empty_clip(video_info);
+         }
+     }
+ }
+@@ -283,33 +283,33 @@ static void omapCheckClip(OmapPortPriv *
+  * don't end up with any clipped windows on the external controller.
+  */
+ static void
+-omapClipNotify(KdScreenInfo *screen, void *data, WindowPtr window, int dx,
+-               int dy)
++omap_video_clip_notify(KdScreenInfo *screen, void *data, WindowPtr window, int dx,
++                       int dy)
+ {
+-    OmapPortPriv *port_info = data;
++    struct omap_video_info *video_info = data;
+ 
+-    port_info->visibility = window->visibility;
+-    omapCheckClip(port_info);
++    video_info->visibility = window->visibility;
++    check_clip(video_info);
+ }
+ 
+ /**
+  * Xv attributes get/set support.
+  */
+ static int
+-omapGetPortAttribute(KdScreenInfo *screen, Atom attribute, int *value,
+-                     pointer data)
++omap_video_get_attribute(KdScreenInfo *screen, Atom attribute, int *value,
++                         pointer data)
+ {
+-    OmapPortPriv *port_info = data;
++    struct omap_video_info *video_info = data;
+ 
+     ENTER();
+ 
+-    if (attribute == xvVSync) {
+-        *value = port_info->plane->vsync;
++    if (attribute == xv_vsync) {
++        *value = video_info->plane->vsync;
+         LEAVE();
+         return Success;
+     }
+-    else if (attribute == xvColorKey) {
+-        *value = port_info->plane->colorkey;
++    else if (attribute == xv_colorkey) {
++        *value = video_info->plane->colorkey;
+         LEAVE();
+         return Success;
+     }
+@@ -319,38 +319,38 @@ omapGetPortAttribute(KdScreenInfo *scree
+ }
+ 
+ static int
+-omapSetPortAttribute(KdScreenInfo *screen, Atom attribute, int value,
+-                     pointer data)
++omap_video_set_attribute(KdScreenInfo *screen, Atom attribute, int value,
++                         pointer data)
+ {
+-    OmapPortPriv *port_info = data;
++    struct omap_video_info *video_info = data;
+ 
+     ENTER();
+ 
+-    if (attribute == xvVSync) {
++    if (attribute == xv_vsync) {
+         if (value < OMAP_VSYNC_NONE || value > OMAP_VSYNC_FORCE) {
+             LEAVE();
+             return BadValue;
+         }
+ 
+-        if (!(port_info->plane->caps & OMAPFB_CAPS_TEARSYNC) && value) {
++        if (!(video_info->plane->caps & OMAPFB_CAPS_TEARSYNC) && value) {
+             ErrorF("omapSetPortAttribute: requested vsync on a non-sync "
+                    "capable port\n");
+             LEAVE();
+             return BadValue;
+         }
+ 
+-        port_info->plane->vsync = value;
++        video_info->plane->vsync = value;
+         LEAVE();
+         return Success;
+     }
+-    else if (attribute == xvColorKey) {
++    else if (attribute == xv_colorkey) {
+         if (value < 0 || value > 0xffff) {
+             LEAVE();
+             return BadValue;
+         }
+ 
+-        port_info->plane->colorkey = value;
+-        port_info->plane->dirty = TRUE;
++        video_info->plane->colorkey = value;
++        video_info->plane->dirty = TRUE;
+         LEAVE();
+         return Success;
+     }
+@@ -363,9 +363,9 @@ omapSetPortAttribute(KdScreenInfo *scree
+  * Clip the image size to the visible screen.
+  */
+ static void
+-omapQueryBestSize(KdScreenInfo *screen, Bool motion, short vid_w,
+-                  short vid_h, short dst_w, short dst_h,
+-                  unsigned int *p_w, unsigned int *p_h, pointer data)
++omap_video_query_best_size(KdScreenInfo *screen, Bool motion, short vid_w,
++                           short vid_h, short dst_w, short dst_h,
++                           unsigned int *p_w, unsigned int *p_h, pointer data)
+ {
+     if (dst_w < screen->width)
+         *p_w = dst_w;
+@@ -386,10 +386,11 @@ omapQueryBestSize(KdScreenInfo *screen, 
+  * macroblock (2x1) at a time.
+  */
+ void
+-omapCopyPackedData(KdScreenInfo *screen, OmapPortPriv *port_info, CARD8 *src,
+-    CARD8 *dst, int randr, int srcPitch, int dstPitch, const int srcW,
+-    const int srcH, int top, int left, int h, int w, const int dstW,
+-    const int dstH)
++omap_copy_scale_packed(KdScreenInfo *screen,
++                       struct omap_video_info *video_info, CARD8 *src,
++                       CARD8 *dst, int randr, int srcPitch, int dstPitch,
++                       const int srcW, const int srcH, int top, int left,
++                       int h, int w, const int dstW, const int dstH)
+ {
+     int i = 0, k = 0, ih = 0, jh = 0, jhn = (srcH - dstH);
+     int kh = 0, khn = (srcW - dstW), lh = 0;
+@@ -412,14 +413,14 @@ omapCopyPackedData(KdScreenInfo *screen,
+     w >>= 1;
+ 
+     for (i = 0; i < h; i++, src += srcPitch, ih += (srcH - dstH)) {
+-        if (port_info->vscale && (jh == ih || (jh < ih && jhn > ih))) {
++        if (video_info->vscale && (jh == ih || (jh < ih && jhn > ih))) {
+             jh += srcH;
+             jhn += srcH;
+             continue;
+         }
+ 
+         /* memcpy the whole lot if we can: it's a lot quicker. */
+-        if (!port_info->hscale) {
++        if (!video_info->hscale) {
+             memcpy(dst, src, srcPitch);
+         }
+         else {
+@@ -460,10 +461,10 @@ omapCopyPackedData(KdScreenInfo *screen,
+  * FIXME: Target for arg reduction.
+  */
+ static void
+-omapCopyPlanarDataYUV420(KdScreenInfo *screen, OmapPortPriv *port_info, CARD8 *srcb,
+-                         CARD8 *dstb, int randr, int srcPitch, int srcPitch2,
+-                         int dstPitch, int srcW, int srcH, int top, int left,
+-                         int h, int w, int id)
++omap_copy_yuv420(KdScreenInfo *screen, struct omap_video_info *video_info,
++                 CARD8 *srcb, CARD8 *dstb, int randr, int srcPitch,
++                 int srcPitch2, int dstPitch, int srcW, int srcH, int top,
++                 int left, int h, int w, int id)
+ {
+     CARD8 *srcy, *srcu, *srcv, *dst;
+     CARD16 *d1;
+@@ -535,10 +536,11 @@ omapCopyPlanarDataYUV420(KdScreenInfo *s
+  * FIXME: Target for arg reduction.
+  */
+ static void
+-omapExpandPlanarData(KdScreenInfo *screen, OmapPortPriv *port_info, CARD8 *src,
+-    CARD8 *dstb, int randr, int srcPitch, int srcPitch2, int dstPitch,
+-    int srcW, int srcH, int height, int top, int left, int h, int w, int id,
+-    int dstW, int dstH)
++omap_copy_scale_planar(KdScreenInfo *screen,
++                       struct omap_video_info *video_info, CARD8 *src,
++                       CARD8 *dstb, int randr, int srcPitch, int srcPitch2,
++                       int dstPitch, int srcW, int srcH, int height, int top,
++                       int left, int h, int w, int id, int dstW, int dstH)
+ {
+     CARD8 *src1, *src2, *src3, *dst1;
+     int srcDown = srcPitch, srcDown2 = srcPitch2;
+@@ -570,7 +572,7 @@ omapExpandPlanarData(KdScreenInfo *scree
+ 
+     w >>= 1;
+     for (i = 0; i < h; i++, ih += (srcH - dstH)) {
+-        if (port_info->vscale && (jh == ih || (jh < ih && jhn > ih))) {
++        if (video_info->vscale && (jh == ih || (jh < ih && jhn > ih))) {
+             jh += srcH;
+             jhn += srcH;
+         }
+@@ -587,7 +589,7 @@ omapExpandPlanarData(KdScreenInfo *scree
+             lh = 2 * (srcW - dstW);
+ 
+             for (k = 0; k < w; k++, lh += 2 * (srcW - dstW)) {
+-                if (port_info->hscale && k != (w - 1) &&
++                if (video_info->hscale && k != (w - 1) &&
+                     (kh == lh || (kh < lh && khn > lh))) {
+                     kh += (2 * srcW);
+                     khn += (2 * srcW); 
+@@ -614,16 +616,16 @@ omapExpandPlanarData(KdScreenInfo *scree
+ }
+ 
+ /**
+- * Start the video overlay; relies on data in port_info being sensible for
++ * Start the video overlay; relies on data in video_info being sensible for
+  * the current frame.
+  */
+-static Bool
+-_omapStartVideo(OmapPortPriv *port_info)
++static int
++start_video(struct omap_video_info *video_info)
+ {
+-    if (port_info->plane->state >= OMAP_STATE_ACTIVE) {
++    if (video_info->plane->state >= OMAP_STATE_ACTIVE) {
+         DebugF("omapStartVideo: plane %d still active!\n",
+-               port_info->plane->id);
+-        _omapStopVideo(port_info, TRUE);
++               video_info->plane->id);
++        stop_video(video_info, TRUE);
+         usleep(5000);
+     }
+ 
+@@ -635,154 +637,154 @@ _omapStartVideo(OmapPortPriv *port_info)
+      * macroblocks in essence, so lop off up to the last three lines, and
+      * let the hardware scale.
+      */
+-    port_info->plane->src_area.x = 0;
+-    port_info->plane->dst_area.x = port_info->dst_x;
+-    port_info->plane->dst_area.width = port_info->dst_w;
++    video_info->plane->src_area.x = 0;
++    video_info->plane->dst_area.x = video_info->dst_x;
++    video_info->plane->dst_area.width = video_info->dst_w;
+ 
+-    if (port_info->hscale)
+-        port_info->plane->src_area.width = port_info->dst_w & ~1;
++    if (video_info->hscale)
++        video_info->plane->src_area.width = video_info->dst_w & ~1;
+     else
+-        port_info->plane->src_area.width = port_info->src_w;
++        video_info->plane->src_area.width = video_info->src_w;
+ 
+-    port_info->plane->src_area.y = 0;
+-    port_info->plane->dst_area.y = port_info->dst_y;
+-    port_info->plane->dst_area.height = port_info->dst_h;
++    video_info->plane->src_area.y = 0;
++    video_info->plane->dst_area.y = video_info->dst_y;
++    video_info->plane->dst_area.height = video_info->dst_h;
+ 
+-    if (port_info->vscale)
+-        port_info->plane->src_area.height = port_info->dst_h & ~1;
++    if (video_info->vscale)
++        video_info->plane->src_area.height = video_info->dst_h & ~1;
+     else
+-        port_info->plane->src_area.height = port_info->src_h;
++        video_info->plane->src_area.height = video_info->src_h;
+ 
+-    if (!omapPlaneEnable(port_info->plane)) {
++    if (!omap_plane_enable(video_info->plane)) {
+         DebugF("_omapStartVideo: couldn't enable plane %d\n",
+-               port_info->plane->id);
+-        return FALSE;
++               video_info->plane->id);
++        return 0;
+     }
+ 
+-    port_info->omaps->individual_updates |= (1 << port_info->plane->id);
+-    port_info->plane->state = OMAP_STATE_ACTIVE;
++    video_info->omaps->individual_updates |= (1 << video_info->plane->id);
++    video_info->plane->state = OMAP_STATE_ACTIVE;
+ 
+-    DebugF("_omapStartVideo: enabled plane %d\n", port_info->plane->id);
++    DebugF("_omapStartVideo: enabled plane %d\n", video_info->plane->id);
+ 
+-    return TRUE;
++    return 1;
+ }
+ 
+ /**
+  * Stop an overlay.  exit is whether or not the client's exiting.
+  */
+ void
+-omapVideoStop(KdScreenInfo *screen, pointer data, Bool exit)
++omap_video_stop(KdScreenInfo *screen, pointer data, Bool exit)
+ {
+-    OmapPortPriv *port_info = data;
+-    OmapScreenInfo *omaps = port_info->omaps;
++    struct omap_video_info *video_info = data;
++    struct omap_screen_info *omaps = video_info->omaps;
+ 
+     ENTER();
+ 
+-    _omapStopVideo(port_info, TRUE);
++    stop_video(video_info, TRUE);
+ 
+-    if (port_info->timer) {
+-        TimerCancel(port_info->timer);
+-        port_info->timer = NULL;
++    if (video_info->timer) {
++        TimerCancel(video_info->timer);
++        video_info->timer = NULL;
+     }
+ 
+-    port_info->plane->dirty = TRUE;
++    video_info->plane->dirty = TRUE;
+ 
+     if (exit) {
+-        omapEmptyClip(port_info);
++        empty_clip(video_info);
+ 
+-        if (omaps->block_updates & (1 << port_info->plane->id)) {
++        if (omaps->block_updates & (1 << video_info->plane->id)) {
+             DebugF("omapVideoStop: unblocking updates for %d\n",
+-                   port_info->plane->id);
+-            omapUnblockUpdates(port_info);
++                   video_info->plane->id);
++            unblock_updates(video_info);
+         }
+ 
+-        if (port_info->plane->caps & OMAPFB_CAPS_TEARSYNC)
+-            port_info->plane->vsync = OMAP_VSYNC_TEAR;
++        if (video_info->plane->caps & OMAPFB_CAPS_TEARSYNC)
++            video_info->plane->vsync = OMAP_VSYNC_TEAR;
+         else
+-            port_info->plane->vsync = OMAP_VSYNC_NONE;
++            video_info->plane->vsync = OMAP_VSYNC_NONE;
+ 
+-        port_info->visibility = VisibilityPartiallyObscured;
+-        port_info->plane->ext_state = OMAP_EXT_NONE;
+-        port_info->plane->state = OMAP_STATE_STOPPED;
+-        port_info->plane->colorkey = OMAP_DEFAULT_CKEY;
++        video_info->visibility = VisibilityPartiallyObscured;
++        video_info->plane->ext_state = OMAP_EXT_NONE;
++        video_info->plane->state = OMAP_STATE_STOPPED;
++        video_info->plane->colorkey = OMAP_DEFAULT_CKEY;
+     }
+ 
+-    port_info->drawable = NULL;
++    video_info->drawable = NULL;
+ 
+     LEAVE();
+ }
+ 
+ 
+ /**
+- * Set up port_info with the specified parameters, and start the overlay.
++ * Set up video_info with the specified parameters, and start the overlay.
+  */
+ static Bool
+-omapSetupOverlay(KdScreenInfo *screen, OmapPortPriv *port_info, int id,
+-                 int src_w, int src_h, int dst_x, int dst_y, int dst_w,
+-                 int dst_h, DrawablePtr drawable)
++setup_overlay(KdScreenInfo *screen, struct omap_video_info *video_info, int id,
++              int src_w, int src_h, int dst_x, int dst_y, int dst_w,
++              int dst_h, DrawablePtr drawable)
+ {
+-    WindowPtr pWin;
++    WindowPtr window;
+     ENTER();
+ 
+-    if (port_info->plane->state >= OMAP_STATE_ACTIVE) {
++    if (video_info->plane->state >= OMAP_STATE_ACTIVE) {
+         DebugF("omapSetupOverlay: restarting overlay %d\n",
+-               port_info->plane->id);
+-        _omapStopVideo(port_info, TRUE);
++               video_info->plane->id);
++        stop_video(video_info, TRUE);
+     }
+ 
+     if (dst_w >= src_w)
+-        port_info->hscale = FALSE;
++        video_info->hscale = FALSE;
+     else
+-        port_info->hscale = TRUE;
++        video_info->hscale = TRUE;
+     if (dst_h >= src_h)
+-        port_info->vscale = FALSE;
++        video_info->vscale = FALSE;
+     else
+-        port_info->vscale = TRUE;
+-
+-    port_info->src_w = src_w;
+-    port_info->src_h = src_h;
+-    port_info->dst_w = dst_w;
+-    port_info->dst_h = dst_h;
+-    port_info->dst_x = dst_x;
+-    port_info->dst_y = dst_y;
+-    port_info->fourcc = id;
+-    port_info->drawable = drawable;
+-    port_info->plane->ext_state = OMAP_EXT_NONE;
++        video_info->vscale = TRUE;
++
++    video_info->src_w = src_w;
++    video_info->src_h = src_h;
++    video_info->dst_w = dst_w;
++    video_info->dst_h = dst_h;
++    video_info->dst_x = dst_x;
++    video_info->dst_y = dst_y;
++    video_info->fourcc = id;
++    video_info->drawable = drawable;
++    video_info->plane->ext_state = OMAP_EXT_NONE;
+ 
+     switch (id) {
+     case FOURCC_YV12:
+     case FOURCC_I420:
+-        if ((port_info->plane->colors & OMAPFB_COLOR_YUV420) &&
+-            !port_info->hscale && !port_info->vscale &&
++        if ((video_info->plane->colors & OMAPFB_COLOR_YUV420) &&
++            !video_info->hscale && !video_info->vscale &&
+             !(dst_x & 3) && !(dst_w & 3) && !(dst_y & 1) && !(dst_h & 1)) {
+-            port_info->plane->ext_state = OMAP_EXT_CANDIDATE;
++            video_info->plane->ext_state = OMAP_EXT_CANDIDATE;
+         }
+     case FOURCC_YUY2:
+-        port_info->plane->format = OMAPFB_COLOR_YUY422;
+-        port_info->plane->bpp = 2;
++        video_info->plane->format = OMAPFB_COLOR_YUY422;
++        video_info->plane->bpp = 2;
+         break;
+     case FOURCC_UYVY:
+-        port_info->plane->format = OMAPFB_COLOR_YUV422;
+-        port_info->plane->bpp = 2;
++        video_info->plane->format = OMAPFB_COLOR_YUV422;
++        video_info->plane->bpp = 2;
+         break;
+     default:
+-        ErrorF("omapSetupOverlay: bad FourCC %d!\n", port_info->fourcc);
++        ErrorF("omapSetupOverlay: bad FourCC %d!\n", video_info->fourcc);
+         LEAVE();
+         return FALSE;
+     }
+ 
+-    pWin = LookupIDByType(drawable->id, RT_WINDOW);
+-    if (pWin)
+-        port_info->visibility = pWin->visibility;
++    window = LookupIDByType(drawable->id, RT_WINDOW);
++    if (window)
++        video_info->visibility = window->visibility;
+     else
+-        port_info->visibility = VisibilityPartiallyObscured;
+-    omapCheckClip(port_info);
++        video_info->visibility = VisibilityPartiallyObscured;
++    check_clip(video_info);
+ 
+-    port_info->plane->dirty = TRUE;
++    video_info->plane->dirty = TRUE;
+ 
+     LEAVE();
+ 
+-    return _omapStartVideo(port_info);
++    return start_video(video_info);
+ }
+ 
+ /**
+@@ -791,34 +793,34 @@ omapSetupOverlay(KdScreenInfo *screen, O
+  * to Hailstorm limitations.
+  */
+ static int
+-omapReputImage(KdScreenInfo *screen, DrawablePtr drawable, short drw_x,
+-               short drw_y, RegionPtr clipBoxes, pointer data)
++omap_video_reput(KdScreenInfo *screen, DrawablePtr drawable, short drw_x,
++                 short drw_y, RegionPtr clipBoxes, pointer data)
+ {
+-    OmapPortPriv *port_info = data;
++    struct omap_video_info *video_info = data;
+     int ret;
+ 
+     ENTER();
+ 
+-    switch (port_info->plane->ext_state) {
++    switch (video_info->plane->ext_state) {
+     case OMAP_EXT_CANDIDATE:
+     case OMAP_EXT_NONE:
+-        if (!REGION_EQUAL(screen->pScreen, clipBoxes, &port_info->clip)) {
+-            REGION_SUBTRACT(screen->pScreen, port_info->omaps->video_region,
+-                            port_info->omaps->video_region, &port_info->clip);
+-            REGION_COPY(screen->pScreen, &port_info->clip, clipBoxes);
+-            REGION_UNION(screen->pScreen, port_info->omaps->video_region,
+-                         port_info->omaps->video_region, &port_info->clip);
++        if (!REGION_EQUAL(screen->pScreen, clipBoxes, &video_info->clip)) {
++            REGION_SUBTRACT(screen->pScreen, video_info->omaps->video_region,
++                            video_info->omaps->video_region, &video_info->clip);
++            REGION_COPY(screen->pScreen, &video_info->clip, clipBoxes);
++            REGION_UNION(screen->pScreen, video_info->omaps->video_region,
++                         video_info->omaps->video_region, &video_info->clip);
+         }
+ 
+-        KXVPaintRegion(drawable, &port_info->clip, port_info->plane->colorkey);
+-        omapSyncEngine(port_info->omaps->omapc);
+-        omapDisplayFrame(screen, port_info);
+-        omapForceFullScreenUpdate(port_info->omaps, FALSE);
++        KXVPaintRegion(drawable, &video_info->clip, video_info->plane->colorkey);
++        omap_card_sync(video_info->omaps->omapc);
++        push_frame(screen, video_info);
++        omap_screen_update_all(video_info->omaps, FALSE);
+         ret = Success;
+         break;
+ 
+     default:
+-        omapForceFullScreenUpdate(port_info->omaps, FALSE);
++        omap_screen_update_all(video_info->omaps, FALSE);
+         ret = BadValue;
+     }
+ 
+@@ -834,20 +836,20 @@ omapReputImage(KdScreenInfo *screen, Dra
+  * or KdXVCopyPackedData (packed).
+  */
+ static int
+-omapPutImage(KdScreenInfo *screen, DrawablePtr drawable,
+-             short src_x, short src_y,
+-             short dst_x, short dst_y,
+-             short src_w, short src_h,
+-             short dst_w, short dst_h,
+-             int id,
+-             unsigned char *buf,
+-             short width,
+-             short height,
+-             Bool sync,
+-             RegionPtr clip_boxes,
+-             pointer data)
++omap_video_put(KdScreenInfo *screen, DrawablePtr drawable,
++               short src_x, short src_y,
++               short dst_x, short dst_y,
++               short src_w, short src_h,
++               short dst_w, short dst_h,
++               int id,
++               unsigned char *buf,
++               short width,
++               short height,
++               Bool sync,
++               RegionPtr clip_boxes,
++               pointer data)
+ {
+-    OmapPortPriv *port_info = (OmapPortPriv *) data;
++    struct omap_video_info *video_info = (struct omap_video_info *) data;
+     int updates_blocked = 0;
+     int need_ckey = 0;
+ 
+@@ -862,35 +864,35 @@ omapPutImage(KdScreenInfo *screen, Drawa
+         return BadValue;
+     }
+ 
+-    if (omapPlaneIsDirty(port_info, id, src_w, src_h, dst_x, dst_y, dst_w,
+-                         dst_h) || !port_info->plane->fb) {
+-        if (!(port_info->omaps->block_updates & (1 << port_info->plane->id))) {
++    if (is_dirty(video_info, id, src_w, src_h, dst_x, dst_y, dst_w, dst_h) ||
++        !video_info->plane->fb) {
++        if (!(video_info->omaps->block_updates & (1 << video_info->plane->id))) {
+             DebugF("omapPutImage: blocking updates for %d\n",
+-                   port_info->plane->id);
+-            omapBlockUpdates(port_info);
++                   video_info->plane->id);
++            block_updates(video_info);
+             updates_blocked = 1;
+         }
+ 
+-        if (!omapSetupOverlay(screen, port_info, id, src_w, src_h, dst_x,
+-                              dst_y, dst_w, dst_h, drawable)) {
++        if (!setup_overlay(screen, video_info, id, src_w, src_h, dst_x,
++                           dst_y, dst_w, dst_h, drawable)) {
+             ErrorF("omapPutImage: failed to set up overlay: from (%d, %d) "
+                    "to (%d, %d) at (%d, %d) on plane %d\n", src_w, src_h,
+-                   dst_w, dst_h, dst_x, dst_y, port_info->plane->id);
++                   dst_w, dst_h, dst_x, dst_y, video_info->plane->id);
+             if (updates_blocked) {
+                 DebugF("omapPutImage: unblocking updates for %d\n",
+-                       port_info->plane->id);
+-                omapUnblockUpdates(port_info);
++                       video_info->plane->id);
++                unblock_updates(video_info);
+             }
+             return BadAlloc;
+         }
+     }
+ 
+-    if (!REGION_EQUAL(screen->pScreen, &port_info->clip, clip_boxes)) {
+-        REGION_SUBTRACT(screen->pScreen, port_info->omaps->video_region,
+-                        port_info->omaps->video_region, &port_info->clip);
+-        REGION_COPY(screen->pScreen, &port_info->clip, clip_boxes);
+-        REGION_UNION(screen->pScreen, port_info->omaps->video_region,
+-                     port_info->omaps->video_region, &port_info->clip);
++    if (!REGION_EQUAL(screen->pScreen, &video_info->clip, clip_boxes)) {
++        REGION_SUBTRACT(screen->pScreen, video_info->omaps->video_region,
++                        video_info->omaps->video_region, &video_info->clip);
++        REGION_COPY(screen->pScreen, &video_info->clip, clip_boxes);
++        REGION_UNION(screen->pScreen, video_info->omaps->video_region,
++                     video_info->omaps->video_region, &video_info->clip);
+         need_ckey = 1;
+     }
+ 
+@@ -902,45 +904,45 @@ #endif
+ 
+     /* Sync the engine first, so we don't draw over something that's still
+      * being scanned out. */
+-    if (port_info->plane->vsync != OMAP_VSYNC_NONE)
+-        omapSyncEngine(port_info->omaps->omapc);
++    if (video_info->plane->vsync != OMAP_VSYNC_NONE)
++        omap_card_sync(video_info->omaps->omapc);
+ 
+     /* dispc locks up when we try downscaling, so we do it in software
+      * instead.  The external controller can scale just fine, though. */
+     switch (id) {
+     case FOURCC_UYVY:
+     case FOURCC_YUY2:
+-        if (port_info->hscale || port_info->vscale)
+-            omapCopyPackedData(screen, port_info, buf, port_info->plane->fb,
+-                               RR_Rotate_0, width << 1, port_info->plane->pitch,
+-                               src_w, src_h, src_x, src_y, height,
+-                               width, dst_w, dst_h);
++        if (video_info->hscale || video_info->vscale)
++            omap_copy_scale_packed(screen, video_info, buf, video_info->plane->fb,
++                                   RR_Rotate_0, width << 1, video_info->plane->pitch,
++                                   src_w, src_h, src_x, src_y, height,
++                                   width, dst_w, dst_h);
+         else
+-            KdXVCopyPackedData(screen, buf, port_info->plane->fb, RR_Rotate_0,
+-                               width << 1, port_info->plane->pitch, src_w, src_h, src_x,
++            KdXVCopyPackedData(screen, buf, video_info->plane->fb, RR_Rotate_0,
++                               width << 1, video_info->plane->pitch, src_w, src_h, src_x,
+                                src_y, height, width);
+         break;
+ 
+     case FOURCC_YV12:
+     case FOURCC_I420:
+-        if (OMAP_GET_EXT(port_info->plane) == OMAP_EXT_MIGRATED) {
+-            omapCopyPlanarDataYUV420(screen, port_info, buf, port_info->plane->fb,
+-                                    RR_Rotate_0, width, width >> 1,
+-                                    port_info->plane->pitch, src_w, src_h, src_x,
+-                                    src_y, height, width, id);
++        if (OMAP_GET_EXT(video_info->plane) == OMAP_EXT_MIGRATED) {
++            omap_copy_yuv420(screen, video_info, buf, video_info->plane->fb,
++                             RR_Rotate_0, width, width >> 1,
++                             video_info->plane->pitch, src_w, src_h, src_x,
++                             src_y, height, width, id);
+         }
+         else {
+-            if (port_info->hscale || port_info->vscale) {
+-                omapExpandPlanarData(screen, port_info, buf,
+-                                     port_info->plane->fb, RR_Rotate_0,
+-                                     width, (width >> 1),
+-                                     port_info->plane->pitch, src_w, src_h,
+-                                     height, src_x, src_y, height,
+-                                     width, id, dst_w, dst_h);
++            if (video_info->hscale || video_info->vscale) {
++                omap_copy_scale_planar(screen, video_info, buf,
++                                       video_info->plane->fb, RR_Rotate_0,
++                                       width, (width >> 1),
++                                       video_info->plane->pitch, src_w, src_h,
++                                       height, src_x, src_y, height,
++                                       width, id, dst_w, dst_h);
+             }
+             else {
+-                KdXVCopyPlanarData(screen, buf, port_info->plane->fb, RR_Rotate_0,
+-                                   width, (width >> 1), port_info->plane->pitch,
++                KdXVCopyPlanarData(screen, buf, video_info->plane->fb, RR_Rotate_0,
++                                   width, (width >> 1), video_info->plane->pitch,
+                                    src_w, src_h, height, src_x, src_y, height,
+                                    width, id);
+             }
+@@ -948,11 +950,11 @@ #endif
+         break;
+     }
+ 
+-    omapDisplayFrame(screen, port_info);
+-    port_info->plane->ext_state &= ~(OMAP_EXT_PENDING);
++    push_frame(screen, video_info);
++    video_info->plane->ext_state &= ~(OMAP_EXT_PENDING);
+ 
+     if (need_ckey)
+-        KXVPaintRegion(drawable, &port_info->clip, port_info->plane->colorkey);
++        KXVPaintRegion(drawable, &video_info->clip, video_info->plane->colorkey);
+ 
+     return Success;    
+ }
+@@ -961,8 +963,8 @@ #endif
+  * Give image size and pitches.
+  */
+ static int
+-omapQueryImageAttributes(KdScreenInfo *screen, int id, unsigned short *w,
+-                         unsigned short *h, int *pitches, int *offsets)
++omap_video_query_attributes(KdScreenInfo *screen, int id, unsigned short *w,
++                            unsigned short *h, int *pitches, int *offsets)
+ {
+     int size = 0, tmp = 0;
+ 
+@@ -1011,11 +1013,11 @@ omapQueryImageAttributes(KdScreenInfo *s
+  * Set up all our internal structures.
+  */
+ static KdVideoAdaptorPtr
+-omapVideoOverlaySetup(OmapScreenInfo *omaps)
++omap_video_setup_adaptors(struct omap_screen_info *omaps)
+ {
+     KdVideoAdaptorPtr adapt;
+-    OmapPortPriv *port_info;
+-    OmapPlaneInfo *plane;
++    struct omap_video_info *video_info;
++    struct omap_plane_info *plane;
+     int i;
+ 
+     omaps->num_video_ports = 0;
+@@ -1031,24 +1033,24 @@ omapVideoOverlaySetup(OmapScreenInfo *om
+ 
+     adapt = xcalloc(1, sizeof(KdVideoAdaptorRec) +
+                        omaps->num_video_ports *
+-                        (sizeof(OmapPortPriv) + sizeof(DevUnion)));
++                        (sizeof(*video_info) + sizeof(DevUnion)));
+     if (!adapt)
+         return NULL;
+ 
+-    DummyEncoding[0].width = omaps->screen->width;
+-    DummyEncoding[0].height = omaps->screen->height;
++    dummy_encoding[0].width = omaps->screen->width;
++    dummy_encoding[0].height = omaps->screen->height;
+ 
+     adapt->type = XvWindowMask | XvInputMask | XvImageMask;
+     adapt->flags = (VIDEO_CLIP_TO_VIEWPORT | VIDEO_OVERLAID_IMAGES);
+     adapt->name = "OMAP Video Overlay";
+     adapt->nEncodings = 1;
+-    adapt->pEncodings = DummyEncoding;
+-    adapt->nFormats = NUM_FORMATS;
+-    adapt->pFormats = Formats;
++    adapt->pEncodings = dummy_encoding;
++    adapt->nFormats = ARRAY_SIZE(xv_formats);
++    adapt->pFormats = xv_formats;
+     adapt->nPorts = omaps->num_video_ports;
+     adapt->pPortPrivates = (DevUnion *)(&adapt[1]);
+     
+-    port_info = (OmapPortPriv *)
++    video_info = (struct omap_video_info *)
+                   (&adapt->pPortPrivates[omaps->num_video_ports]);
+ 
+     plane = omaps->omapc->planes;
+@@ -1057,35 +1059,35 @@ omapVideoOverlaySetup(OmapScreenInfo *om
+                !(plane->colors & (OMAPFB_COLOR_YUV422 | OMAPFB_COLOR_YUY422)))
+             plane = plane->next;
+ 
+-        port_info[i].plane = plane;
+-        port_info[i].omaps = omaps;
+-        port_info[i].visibility = VisibilityPartiallyObscured;
+-        port_info[i].drawable = NULL;
+-        REGION_INIT(pScreen, &port_info[i].clip, NullBox, 0);
++        video_info[i].plane = plane;
++        video_info[i].omaps = omaps;
++        video_info[i].visibility = VisibilityPartiallyObscured;
++        video_info[i].drawable = NULL;
++        REGION_INIT(pScreen, &video_info[i].clip, NullBox, 0);
+ 
+-        adapt->pPortPrivates[i].ptr = &port_info[i];
++        adapt->pPortPrivates[i].ptr = &video_info[i];
+ 
+         plane = plane->next;
+     }
+ 
+-    adapt->nAttributes = NUM_ATTRIBUTES;
+-    adapt->pAttributes = Attributes;
+-    adapt->nImages = NUM_IMAGES;
+-    adapt->pImages = Images;
++    adapt->nAttributes = ARRAY_SIZE(xv_attributes);
++    adapt->pAttributes = xv_attributes;
++    adapt->nImages = ARRAY_SIZE(xv_images);
++    adapt->pImages = xv_images;
+ 
+-    adapt->PutImage = omapPutImage;
+-    adapt->ReputImage = omapReputImage;
+-    adapt->StopVideo = omapVideoStop;
+-    adapt->GetPortAttribute = omapGetPortAttribute;
+-    adapt->SetPortAttribute = omapSetPortAttribute;
+-    adapt->QueryBestSize = omapQueryBestSize;
+-    adapt->QueryImageAttributes = omapQueryImageAttributes;
+-    adapt->ClipNotify = omapClipNotify;
++    adapt->PutImage = omap_video_put;
++    adapt->ReputImage = omap_video_reput;
++    adapt->StopVideo = omap_video_stop;
++    adapt->GetPortAttribute = omap_video_get_attribute;
++    adapt->SetPortAttribute = omap_video_set_attribute;
++    adapt->QueryBestSize = omap_video_query_best_size;
++    adapt->QueryImageAttributes = omap_video_query_attributes;
++    adapt->ClipNotify = omap_video_clip_notify;
+ 
+     omaps->xv_adaptors = adapt;
+ 
+-    xvColorKey = MAKE_ATOM("XV_COLORKEY");
+-    xvVSync = MAKE_ATOM("XV_OMAP_VSYNC");
++    xv_colorkey = MAKE_ATOM("XV_COLORKEY");
++    xv_colorkey = MAKE_ATOM("XV_OMAP_VSYNC");
+ 
+     return adapt;
+ }
+@@ -1094,11 +1096,11 @@ #ifdef XV
+ /**
+  * Set up everything we need for Xv.
+  */
+-Bool omapVideoInit(OmapScreenInfo *omaps)
++Bool omap_video_init(struct omap_screen_info *omaps)
+ {
+-    KdVideoAdaptorPtr *adaptors, *newAdaptors = NULL;
+-    KdVideoAdaptorPtr newAdaptor = NULL;
+-    int numAdaptors = 0;
++    KdVideoAdaptorPtr *adaptors, *new_adaptors = NULL;
++    KdVideoAdaptorPtr new_adaptor = NULL;
++    int num_adaptors = 0;
+ 
+     omaps->video_region = REGION_CREATE(omaps->screen->pScreen, NullBox, 0);
+     if (!omaps->video_region)
+@@ -1106,31 +1108,31 @@ Bool omapVideoInit(OmapScreenInfo *omaps
+ 
+     omaps->xv_adaptors = NULL;
+ 
+-    numAdaptors = KdXVListGenericAdaptors(omaps->screen, &adaptors);
+-    newAdaptor = omapVideoOverlaySetup(omaps);
++    num_adaptors = KdXVListGenericAdaptors(omaps->screen, &adaptors);
++    new_adaptor = omap_video_setup_adaptors(omaps);
+ 
+-    if (!newAdaptor)
++    if (!new_adaptor)
+         return FALSE;
+ 
+-    if (!numAdaptors) {
+-        numAdaptors = 1;
+-        adaptors = &newAdaptor;
++    if (!num_adaptors) {
++        num_adaptors = 1;
++        adaptors = &new_adaptor;
+     }
+     else {
+-        newAdaptors = xcalloc(numAdaptors + 1, sizeof(KdVideoAdaptorPtr *));
+-        if (!newAdaptors)
++        new_adaptors = xcalloc(num_adaptors + 1, sizeof(KdVideoAdaptorPtr *));
++        if (!new_adaptors)
+             return FALSE;
+ 
+-        memcpy(newAdaptors, adaptors, numAdaptors * sizeof(KdVideoAdaptorPtr));
+-        newAdaptors[numAdaptors] = newAdaptor;
+-        adaptors = newAdaptors;
+-        numAdaptors++;
++        memcpy(new_adaptors, adaptors, num_adaptors * sizeof(KdVideoAdaptorPtr));
++        new_adaptors[num_adaptors] = new_adaptor;
++        adaptors = new_adaptors;
++        num_adaptors++;
+     }
+ 
+-    KdXVScreenInit(omaps->screen->pScreen, adaptors, numAdaptors);
++    KdXVScreenInit(omaps->screen->pScreen, adaptors, num_adaptors);
+ 
+-    if (newAdaptors)
+-        xfree(newAdaptors);
++    if (new_adaptors)
++        xfree(new_adaptors);
+ 
+     return TRUE;
+ }
+@@ -1138,18 +1140,18 @@ Bool omapVideoInit(OmapScreenInfo *omaps
+ /**
+  * Shut down Xv, used on regeneration.
+  */
+-void omapVideoFini(OmapScreenInfo *omaps)
++void omap_video_fini(struct omap_screen_info *omaps)
+ {
+     REGION_DESTROY(omaps->screen->pScreen, omaps->video_region);
+ }
+ #else
+-Bool omapVideoInit(OmapScreenInfo *omaps)
++Bool omap_video_init(struct omap_screen_info *omaps)
+ {
+     omaps->video_region = NULL;
+     return TRUE;
+ }
+ 
+-void omapVideoFini(OmapScreenInfo *omaps)
++void omap_video_init(struct omap_screen_info *omaps)
+ {
+ }
+ #endif
+diff --git a/hw/kdrive/omap/omapinit.c b/hw/kdrive/omap/omapinit.c
+index 85e5207..1bf8486 100644
+--- a/hw/kdrive/omap/omapinit.c
++++ b/hw/kdrive/omap/omapinit.c
+@@ -36,16 +36,16 @@ InitCard (char *name)
+     KdCardAttr  attr;
+ 
+     ENTER();
+-    KdCardInfoAdd(&omapFuncs, &attr, 0);
++    KdCardInfoAdd(&omap_funcs, &attr, 0);
+     
+     LEAVE();
+ }   
+ 
+ void
+-InitOutput (ScreenInfo *pScreenInfo, int argc, char **argv)
++InitOutput (ScreenInfo *screen_info, int argc, char **argv)
+ {
+     ENTER();
+-    KdInitOutput(pScreenInfo, argc, argv);
++    KdInitOutput(screen_info, argc, argv);
+     LEAVE();
+ }   
+ 
