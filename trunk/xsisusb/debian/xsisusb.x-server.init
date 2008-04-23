@@ -1,0 +1,50 @@
+#!/bin/sh
+
+. /etc/osso-af-init/x-server.defs
+
+ARGS="-mouse tslib -nozap -dpi $DISPLAY_DPI -wr -nolisten tcp"
+
+case "$1" in
+  start)
+    if [ -e /home/user/first-boot-flag ]; then
+        panel=`cat /sys/devices/platform/omapfb/panel/name`
+        hwver=`cat /proc/component_version 2> /dev/null |
+              sed -n 's/hw-build[[:blank:]]\+\(.*\)/\1/p' 2> /dev/null`
+        product=`cat /proc/component_version 2> /dev/null |
+                 sed -n 's/product[[:blank:]]\+\(.*\)/\1/p' 2> /dev/null`
+        if [  -r /etc/pointercal-${panel}-${product}-${hwver}.default ]; then
+            tscid=${panel}-${hwver}
+        elif [ -r /etc/pointercal-${panel}-${product}.default ]; then
+            tscid=${panel}-${product}
+        else
+            tscid=${panel}
+        fi
+
+        curlink=`readlink /etc/pointercal.default 2> /dev/null`
+        if [  x$curlink != x"pointercal-${tscid}.default" ]; then
+            ln -sf pointercal-${tscid}.default /etc/pointercal.default
+            cp /etc/pointercal.default /etc/pointercal
+        fi
+    fi
+
+    if [ ! -r /etc/pointercal ]; then
+        cp /etc/pointercal.default /etc/pointercal
+    fi
+    
+    if [ -x /usr/sbin/dsmetool ]; then
+        dsmetool --nice=-1 -r "/usr/bin/Xomap $ARGS"
+    else
+        /usr/bin/Xomap $ARGS >/dev/null 2>&1 &
+    fi
+    ;;
+
+  stop)
+    dsmetool -k "/usr/bin/Xomap $ARGS"
+    ;;
+
+  *)
+    echo "Usage: $0 {start|stop}"
+    exit 1
+    ;;
+
+esac

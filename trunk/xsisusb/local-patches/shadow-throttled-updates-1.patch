@@ -1,0 +1,59 @@
+diff --git a/exa/exa_priv.h b/exa/exa_priv.h
+diff --git a/exa/exa_render.c b/exa/exa_render.c
+diff --git a/miext/shadow/shadow.c b/miext/shadow/shadow.c
+index b4a739b..5ed0a26 100644
+--- a/miext/shadow/shadow.c
++++ b/miext/shadow/shadow.c
+@@ -50,6 +50,12 @@ #define unwrap(priv, real, mem) {\
+     real->mem = priv->mem; \
+ }
+ 
++static Bool
++dummyPreupdate(ScreenPtr pScreen, shadowBufPtr pBuf)
++{
++    return TRUE;
++}
++
+ static void
+ shadowRedisplay(ScreenPtr pScreen)
+ {
+@@ -58,6 +64,9 @@ shadowRedisplay(ScreenPtr pScreen)
+ 
+     if (!pBuf || !pBuf->pDamage || !pBuf->update)
+ 	return;
++    /* allow deferral of updates, to minimize overdraw, etc. */
++    if (!pBuf->ready_to_update(pScreen, pBuf))
++	return;
+     pRegion = DamageRegion(pBuf->pDamage);
+     if (REGION_NOTEMPTY(pScreen, pRegion)) {
+ 	(*pBuf->update)(pScreen, pBuf);
+@@ -173,6 +182,7 @@ #endif
+     pBuf->pPixmap = 0;
+     pBuf->closure = 0;
+     pBuf->randr = 0;
++    pBuf->ready_to_update = dummyPreupdate;
+ #ifdef BACKWARDS_COMPATIBILITY
+     REGION_NULL(pScreen, &pBuf->damage); /* bc */
+ #endif
+diff --git a/miext/shadow/shadow.h b/miext/shadow/shadow.h
+index 8986809..0c6fa46 100644
+--- a/miext/shadow/shadow.h
++++ b/miext/shadow/shadow.h
+@@ -48,6 +48,8 @@ typedef void *(*ShadowWindowProc) (Scree
+ 				   CARD32	*size,
+ 				   void		*closure);
+ 
++typedef Bool (*ShadowPreupdateProc) (ScreenPtr pScreen, shadowBufPtr pBuf);
++
+ /* BC hack: do not move the damage member.  see shadow.c for explanation. */
+ typedef struct _shadowBuf {
+     DamagePtr           pDamage;
+@@ -58,6 +60,8 @@ typedef struct _shadowBuf {
+     void		*closure;
+     int			randr;
+ 
++    ShadowPreupdateProc ready_to_update;    
++
+     /* screen wrappers */
+     GetImageProcPtr     GetImage;
+     CloseScreenProcPtr  CloseScreen;

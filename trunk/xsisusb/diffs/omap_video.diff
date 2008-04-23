@@ -1,0 +1,953 @@
+diff --git a/hw/kdrive/omap/omap_video.c b/hw/kdrive/omap/omap_video.c
+index 7c0752d..99fd12a 100644
+--- a/hw/kdrive/omap/omap_video.c
++++ b/hw/kdrive/omap/omap_video.c
+@@ -31,6 +31,8 @@ #ifdef HAVE_KDRIVE_CONFIG_H
+ #include <kdrive-config.h>
+ #endif
+ 
++#define DEBUG /* DNC */
++
+ #include "omap.h"
+ #include "omapfb.h"
+ #include <linux/fb.h>
+@@ -47,6 +49,10 @@ #define MAKE_ATOM(a) MakeAtom(a, sizeof(
+ #define IMAGE_MAX_WIDTH 800
+ #define IMAGE_MAX_HEIGHT 480
+ 
++#ifndef max
++#define max(x, y) (((x) >= (y)) ? (x) : (y))
++#endif
++
+ static KdVideoEncodingRec DummyEncoding[] = {
+     { 0, "XV_IMAGE", IMAGE_MAX_WIDTH, IMAGE_MAX_HEIGHT, { 1, 1 } },
+ };
+@@ -77,19 +83,160 @@ #define NUM_ATTRIBUTES (sizeof(Attribute
+ 
+ static Atom xvColorKey, xvScalingAlgorithm, xvVSync;
+ 
++/**
++ * Check if plane attributes have changed.
++ */
+ static _X_INLINE int
+ omapPlaneIsDirty(OmapPortPriv *pPortPriv, int id, int src_w, int src_h,
+-                 int dst_x, int dst_y, int dst_w, int dst_h)
++                 int dst_x, int dst_y, int dst_w, int dst_h,
++                 DrawablePtr pDrawable)
+ {
+     if (pPortPriv->id != id || pPortPriv->src_w != src_w ||
+         pPortPriv->src_h != src_h || pPortPriv->dst_x != dst_x ||
+         pPortPriv->dst_y != dst_y || pPortPriv->dst_w != dst_w ||
+-        pPortPriv->dst_h != dst_h)
++        pPortPriv->dst_h != dst_h || pPortPriv->pDrawable != pDrawable ||
++        pPortPriv->ext_state & OMAP_EXT_PENDING || pPortPriv->dirty)
+         return 1;
+     else
+         return 0;
+ }
+ 
++/**
++ * Check if a given region in the colourkey region is actually completely
++ * colourkey.  If no region is given, use the whole area.
++ */
++static int
++omapIsColourKey(const OmapPortPriv *pPortPriv, RegionPtr pRegion)
++{
++    int i, j, k;
++    BoxPtr box;
++    int pitch;
++    OmapScreenInfo *omaps = pPortPriv->omaps;
++    CARD16 *pixel;
++
++    ENTER();
++
++    return 1; /* DNC */
++
++    if (!pRegion)
++        pRegion = &(pPortPriv->clip);
++
++    pitch = omaps->omapc->fbdev.fix.line_length;
++
++    omapAccumulateDamage(omaps, pRegion);
++    omapFlushDamage(omaps);
++    omapSyncEngine(pPortPriv->omaps);
++
++    box = REGION_RECTS(pRegion);
++    for (k = 0; k < REGION_NUM_RECTS(pRegion); k++, box++) {
++        for (i = max(box->y1, pPortPriv->dst_y);
++             i < box->y2 && i < (pPortPriv->dst_y + pPortPriv->dst_h);
++             i++) {
++            pixel = (CARD16 *)(omaps->omapc->fbdev.fb_base + (i * pitch) +
++                               max(box->x1, pPortPriv->dst_x));
++            for (j = max(box->x1, pPortPriv->dst_x);
++                 j < box->x2 && j < (pPortPriv->dst_x + pPortPriv->dst_h);
++                 j++) {
++                if (*pixel != pPortPriv->colorKey)
++                    return 0;
++                pixel++;
++            }
++        }
++    }
++
++    LEAVE();
++
++    return 1;
++}
++
++/**
++ * When the clip on a window changes, check it and stash it away, so we
++ * don't end up with any clipped windows on the external controller.
++ */
++static void
++omapClipNotify(KdScreenInfo *screen, void *data, WindowPtr pWin, int dx,
++               int dy)
++{
++    OmapPortPriv *pPortPriv = data;
++
++    pPortPriv->visibility = pWin->visibility;
++
++    if (pWin->visibility == VisibilityUnobscured) {
++        if (OMAP_GET_EXT(pPortPriv) == OMAP_EXT_CANDIDATE &&
++            omapIsColourKey(pPortPriv, NULL)) {
++            DebugF("omapClipNotify: migrating candidate\n");
++            pPortPriv->ext_state = OMAP_EXT_MIGRATED | OMAP_EXT_PENDING;
++        }
++    }
++    else {
++        if (OMAP_GET_EXT(pPortPriv) == OMAP_EXT_MIGRATED) {
++            DebugF("omapClipNotify: migrating clipped video\n");
++            pPortPriv->ext_state = OMAP_EXT_CANDIDATE | OMAP_EXT_PENDING;
++        }
++    }
++}
++
++/**
++ * Watch for damage on the colourkey region.  If the area is pure
++ * colourkey and we're a candidate to move from dispc to the external
++ * LCD controller, then move it to the external controller when the
++ * area becomes pure colourkey, and back to dispc when the area is
++ * damaged.
++ *
++ * This function does not actually migrate per se, it just flags
++ * migration to occur for the next frame.
++ */
++static void
++omapVideoDamageReport(DamagePtr pDamage, RegionPtr pRegion,
++                      void *closure)
++{
++    OmapPortPriv *pPortPriv = closure;
++    int state = OMAP_GET_EXT(pPortPriv);
++
++    switch (state) {
++    case OMAP_EXT_MIGRATED:
++        if (!omapIsColourKey(pPortPriv, pRegion)) {
++            DebugF("omapVideoDamageReport: area is not colourkey, candidate\n");
++            pPortPriv->ext_state = OMAP_EXT_CANDIDATE | OMAP_EXT_PENDING;
++        }
++        else {
++            DebugF("omapVideoDamageReport: not migrating back\n");
++        }
++
++        break;
++
++    case OMAP_EXT_CANDIDATE:
++        if (omapIsColourKey(pPortPriv, NULL) &&
++            pPortPriv->visibility == VisibilityUnobscured) {
++            DebugF("omapVideoDamageReport: area is colourkey and unobscured\n");
++            pPortPriv->ext_state = OMAP_EXT_MIGRATED | OMAP_EXT_PENDING;
++        }
++        else {
++            DebugF("omapVideoDamageReport: not migrating candidate\n");
++        }
++
++        break;
++
++    default:
++        DebugF("omapVideoDamageReport: called on non-external plane %d\n",
++               pPortPriv->plane);
++        break;
++    }
++
++    DamageEmpty(pDamage);
++}
++
++static void
++omapVideoDamageDestroy(DamagePtr pDamage, void *closure) {
++    OmapPortPriv *pPortPriv = closure;
++
++    pPortPriv->pDamage = NULL;
++    pPortPriv->damage_registered = FALSE;
++}
++
++/**
++ * Xv attributes get/set support.
++ */
+ static int
+ omapGetPortAttribute(KdScreenInfo *screen, Atom attribute, int *value,
+                      pointer data)
+@@ -173,6 +320,9 @@ omapSetPortAttribute(KdScreenInfo *scree
+     return BadMatch;
+ }
+ 
++/**
++ * Clip the image size to the visible screen.
++ */
+ static void
+ omapQueryBestSize(KdScreenInfo *screen, Bool motion, short vid_w,
+                   short vid_h, short dst_w, short dst_h,
+@@ -189,9 +339,13 @@ omapQueryBestSize(KdScreenInfo *screen, 
+         *p_h = IMAGE_MAX_HEIGHT;
+ }
+ 
+-/* Taken from kxv.c, hacked to support software scaling.  Unfortunately,
+- * horizontal downscaling will never be pretty, since we need to trash two
+- * pixels at a time in order to keep accesses aligned. */
++
++/**
++ * Copy packed video data for downscaling, where 'scaling' in this case
++ * means just removing lines.  Unfortunately, since we don't want to get
++ * into the business of swapping the U and V channels, we remove a
++ * macroblock (2x1) at a time.
++ */
+ void
+ omapCopyPackedData(KdScreenInfo *screen, OmapPortPriv *pPortPriv, CARD8 *src,
+     CARD8 *dst, int randr, int srcPitch, int dstPitch, const int srcW,
+@@ -253,10 +407,82 @@ omapCopyPackedData(KdScreenInfo *screen,
+     }
+ }
+ 
+-/* FIXME this function should probably not have thirty-five local
+- * variables.  (count them if you don't believe me.) */
+-void
+-omapCopyPlanarData(KdScreenInfo *screen, OmapPortPriv *pPortPriv, CARD8 *src,
++/**
++ * Copy I420 data to the custom 'YUV420' format, which is actually:
++ * y11 u11,u12,u21,u22 u13,u14,u23,u24 y12 y14 y13
++ * y21 v11,v12,v21,v22 v13,v14,v23,v24 y22 y24 y23
++ *
++ * The third and fourth luma components are swapped.  Yes, this is weird.
++ *
++ * So, while we have the same 2x2 macroblocks in terms of colour granularity,
++ * we actually require 4x2.  We lop off the last 1-3 lines if width is not a
++ * multiple of four, and let the hardware expand.
++ *
++ * FIXME: Target for arg reduction.
++ */
++static void
++omapCopyPlanarDataYUV420(KdScreenInfo *screen, OmapPortPriv *pPortPriv, CARD8 *srcb,
++                         CARD8 *dstb, int randr, int srcPitch, int srcPitch2,
++                         int dstPitch, int srcW, int srcH, int top, int left,
++                         int h, int w, int id)
++{
++    CARD8 *srcy, *srcu, *srcv, *dst;
++    int i, j;
++
++    if ((randr & RR_Rotate_All) != RR_Rotate_0) {
++        ErrorF("omapCopyPlanarData: rotation not supported\n");
++        return;
++    }
++
++    if (top || left || h != srcH || w != srcW) {
++        ErrorF("omapCopyPlanarData: offset updates not supported\n");
++        return;
++    }
++
++    srcy = srcb;
++    srcu = srcy + h * srcPitch;
++    srcv = srcu + (h >> 1) * srcPitch2;
++    dst = dstb;
++
++    w >>= 2;
++    for (i = 0; i < h; i++) {
++        CARD32 *sy = (CARD32 *) srcy;
++        CARD16 *sc;
++        CARD16 *d1 = (CARD16 *) dst;
++
++        /* If we supported YV12, this would need to be swapped. */
++        sc = (CARD16 *) ((i & 1) ? srcv : srcu);
++
++        for (j = 0; j < w; j++) {
++            /* gcc has enforced this insanity on me, so hopefully it's smart
++             * enough to optimise this variable out. */
++            d1 = (CARD16 *) dst;
++
++            /* Luma 1, chroma 1. */
++            *d1++ = ((*sy & 0xff000000) >> 16) | (*sc >> 8);
++            /* Chroma 2, luma 2. */
++            *d1++ = (*sc++ & 0xff00) | ((*sy & 0x00ff0000) >> 16);
++            /* Luma 3, luma 4. */
++            *d1++ = (*sy++ & 0x0000ffff);
++        }
++
++        dst += dstPitch;
++        srcy += srcPitch;
++        if (i & 1) {
++            srcu += srcPitch2;
++            srcv += srcPitch2;
++        }
++    }
++}
++
++/**
++ * Copy and expand planar (I420) -> packed (UYVY) video data, including
++ * downscaling, by just removing two lines at a time.
++ *
++ * FIXME: Target for arg reduction.
++ */
++static void
++omapExpandPlanarData(KdScreenInfo *screen, OmapPortPriv *pPortPriv, CARD8 *src,
+     CARD8 *dstb, int randr, int srcPitch, int srcPitch2, int dstPitch,
+     int srcW, int srcH, int height, int top, int left, int h, int w, int id,
+     int dstW, int dstH)
+@@ -267,60 +493,19 @@ omapCopyPlanarData(KdScreenInfo *screen,
+     int i = 0, k = 0, ih = 0, jh = 0, jhn = 0;
+     int kh = 0, khn = 0, lh = 0;
+ 
++    if ((randr & RR_Rotate_All) != RR_Rotate_0) {
++        ErrorF("omapExpandPlanarData: rotation not supported\n");
++        return;
++    }
++    if (top || left || w != srcW || h != srcH) {
++        ErrorF("omapExpandPlanarData: partial updates not supported\n");
++        return;
++    }
++
+     /* compute source data pointers */
+     src1 = src;
+-    src2 = src1 + height * srcPitch;
+-    src3 = src2 + (height >> 1) * srcPitch2;
+-    switch (randr & RR_Rotate_All) {
+-    case RR_Rotate_0:
+-	srcDown = srcPitch;
+-	srcDown2 = srcPitch2;
+-	srcRight = 2;
+-	srcRight2 = 1;
+-	srcNext = 1;
+-	break;
+-    case RR_Rotate_90:
+-	src1 = src1 + srcH - 1;
+-	src2 = src2 + (srcH >> 1) - 1;
+-	src3 = src3 + (srcH >> 1) - 1;
+-	srcDown = -1;
+-	srcDown2 = -1;
+-	srcRight = srcPitch * 2;
+-	srcRight2 = srcPitch2;
+-	srcNext = srcPitch;
+-	break;
+-    case RR_Rotate_180:
+-	src1 = src1 + srcPitch * (srcH - 1) + (srcW - 1);
+-	src2 = src2 + srcPitch2 * ((srcH >> 1) - 1) + ((srcW >> 1) - 1);
+-	src3 = src3 + srcPitch2 * ((srcH >> 1) - 1) + ((srcW >> 1) - 1);
+-	srcDown = -srcPitch;
+-	srcDown2 = -srcPitch2;
+-	srcRight = -2;
+-	srcRight2 = -1;
+-	srcNext = -1;
+-	break;
+-    case RR_Rotate_270:
+-	src1 = src1 + srcPitch * (srcW - 1);
+-	src2 = src2 + srcPitch2 * ((srcW >> 1) - 1);
+-	src3 = src3 + srcPitch2 * ((srcW >> 1) - 1);
+-	srcDown = 1;
+-	srcDown2 = 1;
+-	srcRight = -srcPitch * 2;
+-	srcRight2 = -srcPitch2;
+-	srcNext = -srcPitch;
+-	break;
+-    }
+-
+-    /* adjust for origin */
+-    src1 += top * srcDown + left * srcNext;
+-    src2 += (top >> 1) * srcDown2 + (left >> 1) * srcRight2;
+-    src3 += (top >> 1) * srcDown2 + (left >> 1) * srcRight2;
+-
+-    if (id == FOURCC_I420) {
+-	CARD8 *srct = src2;
+-	src2 = src3;
+-	src3 = srct;
+-    }
++    src3 = src1 + height * srcPitch;
++    src2 = src3 + (height >> 1) * srcPitch2;
+ 
+     dst1 = dstb;
+ 
+@@ -366,6 +551,10 @@ omapCopyPlanarData(KdScreenInfo *screen,
+     }
+ }
+ 
++/**
++ * Stop the video overlay, optionally clearing both the memory, and the clip
++ * region.  Don't set either to FALSE unless you know what you're doing.
++ */
+ static void
+ _omapStopVideo(OmapPortPriv *pPortPriv, Bool clearclip, Bool clearmem)
+ {
+@@ -408,6 +597,10 @@ _omapStopVideo(OmapPortPriv *pPortPriv, 
+     }
+ }
+ 
++/**
++ * Start the video overlay; relies on data in pPortPriv being sensible for
++ * the current frame.
++ */
+ static Bool
+ _omapStartVideo(OmapPortPriv *pPortPriv)
+ {
+@@ -416,26 +609,35 @@ _omapStartVideo(OmapPortPriv *pPortPriv)
+     struct omapfb_plane_info planeInfo;
+     struct omapfb_color_key colorKey;
+ 
+-    ENTER();
++    DebugF("omapStartVideo: starting from (%d, %d) to (%d, %d, %d, %d)\n", pPortPriv->src_w, pPortPriv->src_h, pPortPriv->dst_x, pPortPriv->dst_y, pPortPriv->dst_w, pPortPriv->dst_h);
+ 
+     pPortPriv->fd = open(pPortPriv->fileName, O_RDWR);
+     if (pPortPriv->fd <= 0) {
+-        ErrorF("omapSetupOverlay: failed to open plane %d\n",
++        ErrorF("omapStartVideo: failed to open plane %d\n",
+                pPortPriv->plane);
+         LEAVE();
+         return FALSE;
+     }
+ 
++    if (pPortPriv->dirty) {
+         if (ioctl(pPortPriv->fd, FBIOGET_VSCREENINFO, &var) != 0) {
+-            ErrorF("omapSetupOverlay: FBIOGET_VSCREENINFO failed\n");
++            ErrorF("omapStartVideo: FBIOGET_VSCREENINFO failed\n");
+             LEAVE();
+             return FALSE;
+         }
+ 
+-        /* hilariously, this will actually trigger upscaling for odd widths, since
+-           we'll output n-1 pixels, and have the engine scale to n. */
++        /* Hilariously, this will actually trigger upscaling for odd widths,
++         * since we'll output n-1 pixels, and have the engine scale to n;
++         * dispc hangs if you try to feed it sub-macroblocks.
++         *
++         * When feeding YUV420 to the external controller, we have 4x2
++         * macroblocks in essence, so lop off up to the last three lines, and
++         * let the hardware scale.
++         */
+         if (pPortPriv->hscale)
+             var.xres = pPortPriv->dst_w & ~1;
++        else if (OMAP_GET_EXT(pPortPriv) == OMAP_EXT_MIGRATED)
++            var.xres = pPortPriv->src_w & ~3;
+         else
+             var.xres = pPortPriv->src_w;
+         if (pPortPriv->vscale)
+@@ -447,13 +649,22 @@ _omapStartVideo(OmapPortPriv *pPortPriv)
+         var.yres_virtual = 0;
+         var.xoffset = 0;
+         var.yoffset = 0;
+-        var.bits_per_pixel = 0;
+         var.rotate = 0;
+-        var.nonstd = pPortPriv->format;
+         var.activate = FB_ACTIVATE_NOW;
+ 
++        /* If we're passing through to external, we need to mark this window
++         * as RGB565, so no colour conversion will take place. */
++        if (OMAP_GET_EXT(pPortPriv) == OMAP_EXT_MIGRATED) {
++            var.nonstd = OMAPFB_COLOR_RGB565;
++            var.bits_per_pixel = 16;
++        }
++        else {
++            var.nonstd = pPortPriv->format;
++            var.bits_per_pixel = 0;
++        }
++
+         if (ioctl(pPortPriv->fd, FBIOPUT_VSCREENINFO, &var) != 0) {
+-            ErrorF("omapSetupOverlay: FBIOPUT_VSCREENINFO failed\n");
++            ErrorF("omapStartVideo: FBIOPUT_VSCREENINFO failed\n");
+             LEAVE();
+             return FALSE;
+         }
+@@ -465,24 +676,32 @@ _omapStartVideo(OmapPortPriv *pPortPriv)
+         if (ioctl(pPortPriv->fd, OMAPFB_SET_COLOR_KEY, &colorKey) != 0) {
+             planeInfo.enabled = 0;
+             (void) ioctl(pPortPriv->fd, OMAPFB_SETUP_PLANE, &planeInfo);
+-            ErrorF("omapSetupOverlay: OMAPFB_SET_COLOR_KEY failed\n");
++            ErrorF("omapStartVideo: OMAPFB_SET_COLOR_KEY failed\n");
+             LEAVE();
+             return FALSE;
+         }
++    }
+ 
+     if (ioctl(pPortPriv->fd, OMAPFB_QUERY_PLANE, &planeInfo) != 0) {
+-        ErrorF("omapSetupOverlay: OMAPFB_QUERY_PLANE failed\n");
++        ErrorF("omapStartVideo: OMAPFB_QUERY_PLANE failed\n");
+         LEAVE();
+         return FALSE;
+     }
++
++    if (OMAP_GET_EXT(pPortPriv) == OMAP_EXT_MIGRATED) {
++        planeInfo.out_width = pPortPriv->src_w;
++        planeInfo.out_height = pPortPriv->src_h;
++    }
++    else {
++        planeInfo.out_width = pPortPriv->dst_w;
++        planeInfo.out_height = pPortPriv->dst_h;
++    }
+     planeInfo.pos_x = pPortPriv->dst_x;
+     planeInfo.pos_y = pPortPriv->dst_y;
+-    planeInfo.out_width = pPortPriv->dst_w;
+-    planeInfo.out_height = pPortPriv->dst_h;
+     planeInfo.channel_out = OMAPFB_CHANNEL_OUT_LCD;
+     planeInfo.enabled = 1;
+     if (ioctl(pPortPriv->fd, OMAPFB_SETUP_PLANE, &planeInfo) != 0) {
+-        ErrorF("omapSetupOverlay: OMAPFB_SETUP_PLANE failed\n");
++        ErrorF("omapStartVideo: OMAPFB_SETUP_PLANE failed\n");
+         LEAVE();
+         return FALSE;
+     }
+@@ -490,7 +709,7 @@ _omapStartVideo(OmapPortPriv *pPortPriv)
+     if (ioctl(pPortPriv->fd, FBIOGET_FSCREENINFO, &fix) != 0) {
+         planeInfo.enabled = 0;
+         (void) ioctl(pPortPriv->fd, OMAPFB_SETUP_PLANE, &planeInfo);
+-        ErrorF("omapSetupOverlay: FBIOGET_FSCREENINFO failed\n");
++        ErrorF("omapStartVideo: FBIOGET_FSCREENINFO failed\n");
+         LEAVE();
+         return FALSE;
+     }
+@@ -499,7 +718,7 @@ _omapStartVideo(OmapPortPriv *pPortPriv)
+     if (!pPortPriv->overlay) {
+         planeInfo.enabled = 0;
+         (void) ioctl(pPortPriv->fd, OMAPFB_SETUP_PLANE, &planeInfo);
+-        ErrorF("omapSetupOverlay: mmaping overlay failed\n");
++        ErrorF("omapStartVideo: mmaping overlay failed\n");
+         LEAVE();
+         return FALSE;
+     }
+@@ -509,27 +728,26 @@ _omapStartVideo(OmapPortPriv *pPortPriv)
+     pPortPriv->dirty = FALSE;
+     pPortPriv->active = 1;
+ 
+-    LEAVE();
+-
+     return TRUE;
+ }
+ 
++/**
++ * Stop an overlay.  exit is whether or not the client's exiting.
++ */
+ void
+ omapVideoStop(KdScreenInfo *screen, pointer data, Bool exit)
+ {
+-    OmapPortPriv *pPortPriv = data, *tmp;
++    OmapPortPriv *pPortPriv = data;
+     OmapScreenInfo *omaps = pPortPriv->omaps;
++    OmapPortPriv *tmp = getOmapPortPriv(omaps, 0);
+     int i;
+ 
+     _omapStopVideo(pPortPriv, exit, TRUE);
+ 
+-    tmp = (OmapPortPriv *)
+-            (&omaps->pAdaptor->pPortPrivates[omaps->numOverlayPorts]);
+-
+     /* When we stop one overlay, the others die in sympathy, so we have to
+      * restart them ... */
+     for (i = 0; i < omaps->numOverlayPorts; i++, tmp++) {
+-        if (tmp->plane != pPortPriv->plane) {
++        if (tmp->plane != pPortPriv->plane && tmp->active) {
+             _omapStopVideo(tmp, FALSE, FALSE);
+             /* ... but not too quickly, otherwise dispc crashes. */
+             usleep(5000);
+@@ -539,35 +757,33 @@ omapVideoStop(KdScreenInfo *screen, poin
+         }
+     }
+ 
+-    pPortPriv->active = 0;
++    pPortPriv->active = FALSE;
+ 
+     if (exit) {
+         pPortPriv->vsync = pPortPriv->vsyncCapable ? OMAP_VSYNC_TEAR :
+                                                      OMAP_VSYNC_NONE;
+         pPortPriv->colorKey = OMAP_DEFAULT_CKEY;
+         pPortPriv->downscaling = OMAP_DOWNSCALING_POINT_SAMPLE;
++        pPortPriv->ext_state = OMAP_EXT_NONE;
+     }
+ 
+-    DamageDamageRegion(pPortPriv->pDrawable, &pPortPriv->clip);
+-    REGION_EMPTY(screen->pScreen, &pPortPriv->clip);
++    if (pPortPriv->damage_registered) {
++        DamageUnregister(pPortPriv->pDrawable, pPortPriv->pDamage);
++        pPortPriv->damage_registered = FALSE;
++    }
+ }
+ 
+ 
++/**
++ * Set up pPortPriv with the specified parameters, and start the overlay.
++ */
+ static Bool
+ omapSetupOverlay(KdScreenInfo *screen, OmapPortPriv *pPortPriv, int id,
+                  int src_w, int src_h, int dst_x, int dst_y, int dst_w,
+-                 int dst_h)
++                 int dst_h, DrawablePtr pDrawable)
+ {
+-    int useExt = 0;
+-
+     ENTER();
+ 
+-    if (dst_w >= 640 || dst_h >= 420) {
+-        DebugF("omapSetupOverlay: (%d, %d) candidate for hailstorm\n", dst_w,
+-               dst_h);
+-        useExt = 1;
+-    }
+-
+     if (dst_w >= src_w)
+         pPortPriv->hscale = FALSE;
+     else
+@@ -588,7 +804,7 @@ omapSetupOverlay(KdScreenInfo *screen, O
+             DebugF("omapSetupOverlay: enabling point-sampling downscaling "
+                    "(h %d, v %d)\n", pPortPriv->hscale, pPortPriv->vscale);
+             pPortPriv->scalePacked = omapCopyPackedData;
+-            pPortPriv->scalePlanar = omapCopyPlanarData;
++            pPortPriv->scalePlanar = omapExpandPlanarData;
+         }
+         else if (pPortPriv->downscaling == OMAP_DOWNSCALING_BILINEAR) {
+             ErrorF("omapSetupOverlay: bilinear downscaling not yet "
+@@ -605,6 +821,35 @@ omapSetupOverlay(KdScreenInfo *screen, O
+ 
+     switch (id) {
+     case FOURCC_I420:
++        /* Set up damage handler where necessary. */
++        if (!pPortPriv->damage_registered ||
++            pPortPriv->pDrawable != pDrawable) {
++            /* If drawable changed, unregister old drawable. */
++            if (pPortPriv->damage_registered)
++                DamageUnregister(pPortPriv->pDrawable, pPortPriv->pDamage);
++
++            /* Hailstorm can scale down by factors of 2 and 4, but this
++             * isn't implemented in the driver yet. */
++            if (!pPortPriv->hscale && !pPortPriv->vscale) {
++                if (!pPortPriv->pDamage) {
++                    pPortPriv->pDamage = DamageCreate(omapVideoDamageReport,
++                                                      omapVideoDamageDestroy,
++                                                      DamageReportNonEmpty,
++                                                      TRUE,
++                                                      screen->pScreen,
++                                                      pPortPriv);
++                }
++
++                DamageRegister(pDrawable, pPortPriv->pDamage);
++
++                pPortPriv->ext_state = OMAP_EXT_CANDIDATE | OMAP_EXT_PENDING;
++
++                /* Force us to look at the new drawable for colourkey. */
++                omapVideoDamageReport(pPortPriv->pDamage, NULL, pPortPriv);
++
++                pPortPriv->damage_registered = TRUE;
++            }
++        }
+     case FOURCC_YUY2:
+         pPortPriv->format = OMAPFB_COLOR_YUY422;
+         pPortPriv->bpp = 2;
+@@ -619,6 +864,11 @@ omapSetupOverlay(KdScreenInfo *screen, O
+         return FALSE;
+     }
+ 
++    if (pPortPriv->active) {
++        _omapStopVideo(pPortPriv, FALSE, FALSE);
++        usleep(5000); /* DNC */
++    }
++
+     pPortPriv->src_w = src_w;
+     pPortPriv->src_h = src_h;
+     pPortPriv->dst_w = dst_w;
+@@ -626,6 +876,7 @@ omapSetupOverlay(KdScreenInfo *screen, O
+     pPortPriv->dst_x = dst_x;
+     pPortPriv->dst_y = dst_y;
+     pPortPriv->id = id;
++    pPortPriv->pDrawable = pDrawable;
+     pPortPriv->dirty = TRUE;
+ 
+     LEAVE();
+@@ -633,19 +884,38 @@ omapSetupOverlay(KdScreenInfo *screen, O
+     return _omapStartVideo(pPortPriv);
+ }
+ 
++/**
++ * Send an update request to the LCD controller.
++ */
+ static void
+ omapDisplayFrame(KdScreenInfo *screen, OmapPortPriv *pPortPriv,
+                  RegionPtr clipBoxes)
+ {
+     struct omapfb_update_window updateWindow;
+ 
+-    /* always update the entire window, since we don't have the smarts
++    /* Always update the entire window, since we don't have the smarts
+      * to only dirty a smaller region for partial updates. */
+     updateWindow.x = 0;
+     updateWindow.y = 0;
+-    updateWindow.width = pPortPriv->dst_w;
+-    updateWindow.height = pPortPriv->dst_h;
+-    updateWindow.format = pPortPriv->format;
++    updateWindow.out_x = 0;
++    updateWindow.out_x = 0;
++
++
++    updateWindow.out_width = pPortPriv->dst_w;
++    updateWindow.out_height = pPortPriv->dst_h;
++
++    if (OMAP_GET_EXT(pPortPriv) == OMAP_EXT_MIGRATED) {
++        updateWindow.format = OMAPFB_COLOR_YUV420;
++        updateWindow.out_width = pPortPriv->src_w; /* DNC */
++        updateWindow.out_height = pPortPriv->src_h; /* DNC */
++        updateWindow.width = pPortPriv->src_w;
++        updateWindow.height = pPortPriv->src_h;
++    }
++    else {
++        updateWindow.format = pPortPriv->format;
++        updateWindow.width = pPortPriv->dst_w;
++        updateWindow.height = pPortPriv->dst_h;
++    }
+ 
+     if (pPortPriv->vsync == OMAP_VSYNC_TEAR)
+         updateWindow.format |= OMAPFB_FORMAT_FLAG_TEARSYNC;
+@@ -671,7 +941,14 @@ #endif
+     }
+ }
+ 
+-/* FIXME do something clever with randr */
++/**
++ * XvPutImage hook.  This does not deal with rotation or partial updates.
++ *
++ * Calls out to omapCopyPlanarData (unobscured planar video),
++ * omapExpandPlanarData (downscaled planar),
++ * omapCopyPackedData (downscaled packed), KdXVCopyPlanarData (obscured planar),
++ * or KdXVCopyPackedData (packed).
++ */
+ static int
+ omapPutImage(KdScreenInfo *screen, DrawablePtr pDrawable,
+              short src_x, short src_y,
+@@ -687,10 +964,7 @@ omapPutImage(KdScreenInfo *screen, Drawa
+              pointer data)
+ {
+     OmapPortPriv *pPortPriv = (OmapPortPriv *) data;
+-    unsigned char *dst;
+-    unsigned char *src = buf;
+ 
+-    /* the kernel will disallow this anyway, there's no clipping. */
+     if (dst_x + dst_w > screen->width || dst_y + dst_h > screen->height) {
+         ErrorF("omapPutImage: specified dimensions (%d, %d) at (%d, %d) are "
+                "larger than the screen (%d, %d)\n", dst_w, dst_h, dst_x,
+@@ -698,12 +972,10 @@ omapPutImage(KdScreenInfo *screen, Drawa
+         return BadValue;
+     }
+ 
+-    pPortPriv->pDrawable = pDrawable;
+-
+     if (omapPlaneIsDirty(pPortPriv, id, src_w, src_h, dst_x, dst_y, dst_w,
+-                         dst_h) || pPortPriv->overlay == NULL) {
++                         dst_h, pDrawable) || !pPortPriv->overlay) {
+         if (!omapSetupOverlay(screen, pPortPriv, id, src_w, src_h, dst_x,
+-                              dst_y, dst_w, dst_h)) {
++                              dst_y, dst_w, dst_h, pDrawable)) {
+             ErrorF("omapPutImage: failed to set up overlay: from (%d, %d) "
+                    "to (%d, %d) at (%d, %d) on plane %d\n", src_w, src_h,
+                    dst_w, dst_h, dst_x, dst_y, pPortPriv->plane);
+@@ -711,49 +983,68 @@ omapPutImage(KdScreenInfo *screen, Drawa
+         }
+     }
+ 
++#if 0 /* DNC */
+     DebugF("omapPutImage: putting image from (%d, %d, %d, %d) to "
+            "(%d, %d, %d, %d)\n", src_x, src_y, src_w, src_h, dst_x, dst_y,
+            dst_w, dst_h);
++#endif
+ 
+-    dst = pPortPriv->overlay;
+-
+-    ioctl(pPortPriv->fd, OMAPFB_SYNC_GFX);
++    /* Sync the engine first, so we don't draw over something that's still
++     * being scanned out. */
++    omapSyncEngine(pPortPriv->omaps);
+ 
+-    /* The hardware locks up when we try downscaling, so we do it in software
+-     * instead. */
++    /* dispc locks up when we try downscaling, so we do it in software
++     * instead.  The external controller can scale just fine, though. */
+     switch (id) {
+     case FOURCC_UYVY:
+     case FOURCC_YUY2:
+         if (pPortPriv->hscale || pPortPriv->vscale)
+-            (*pPortPriv->scalePacked)(screen, pPortPriv, src, pPortPriv->overlay,
++            (*pPortPriv->scalePacked)(screen, pPortPriv, buf, pPortPriv->overlay,
+                                       RR_Rotate_0, width << 1, pPortPriv->pitch,
+                                       src_w, src_h, src_x, src_y, height,
+                                       width, dst_w, dst_h);
+         else
+-            KdXVCopyPackedData(screen, src, pPortPriv->overlay, RR_Rotate_0,
++            KdXVCopyPackedData(screen, buf, pPortPriv->overlay, RR_Rotate_0,
+                                width << 1, pPortPriv->pitch, src_w, src_h, src_x,
+                                src_y, height, width);
+         break;
+     case FOURCC_I420:
+-        if (pPortPriv->hscale || pPortPriv->vscale)
+-            (*pPortPriv->scalePlanar)(screen, pPortPriv, src, pPortPriv->overlay,
+-                                      RR_Rotate_0, width, (width >> 1),
+-                                      pPortPriv->pitch, src_w, src_h, height,
+-                                      src_x, src_y, height, width, id, dst_w,
+-                                      dst_h);
+-        else
+-            KdXVCopyPlanarData(screen, src, pPortPriv->overlay, RR_Rotate_0,
+-                               width, (width >> 1), pPortPriv->pitch,
+-                               src_w, src_h, height, src_x, src_y, height,
+-                               width, id);
++        if (OMAP_GET_EXT(pPortPriv) == OMAP_EXT_MIGRATED) {
++            omapCopyPlanarDataYUV420(screen, pPortPriv, buf, pPortPriv->overlay,
++                                    RR_Rotate_0, width, width >> 1,
++                                    pPortPriv->pitch, src_w, src_h, src_x,
++                                    src_y, height, width, id);
++        }
++        else {
++            if (pPortPriv->hscale || pPortPriv->vscale) {
++                (*pPortPriv->scalePlanar)(screen, pPortPriv, buf,
++                                          pPortPriv->overlay, RR_Rotate_0,
++                                          width, (width >> 1),
++                                          pPortPriv->pitch, src_w, src_h,
++                                          height, src_x, src_y, height,
++                                          width, id, dst_w, dst_h);
++            }
++            else {
++                KdXVCopyPlanarData(screen, buf, pPortPriv->overlay, RR_Rotate_0,
++                                   width, (width >> 1), pPortPriv->pitch,
++                                   src_w, src_h, height, src_x, src_y, height,
++                                   width, id);
++            }
++        }
+         break;
+     }
+ 
++    pPortPriv->ext_state &= ~(OMAP_EXT_PENDING);
+     omapDisplayFrame(screen, pPortPriv, clipBoxes);
+ 
+     return Success;    
+ }
+ 
++/**
++ * XvReputImage hook.
++ *
++ * FIXME: Are these the desired semantics?
++ */
+ static int
+ omapReputImage(KdScreenInfo *screen, DrawablePtr pDraw, short dst_x,
+                short dst_y, RegionPtr clipBoxes, pointer data)
+@@ -781,6 +1072,9 @@ omapReputImage(KdScreenInfo *screen, Dra
+     return Success;
+ }
+ 
++/**
++ * Give image size and pitches.
++ */
+ static int
+ omapQueryImageAttributes(KdScreenInfo *screen, int id, unsigned short *w,
+                          unsigned short *h, int *pitches, int *offsets)
+@@ -827,6 +1121,9 @@ omapQueryImageAttributes(KdScreenInfo *s
+     return size;
+ }
+ 
++/**
++ * Set up all our internal structures.
++ */
+ static KdVideoAdaptorPtr
+ omapVideoOverlaySetup(ScreenPtr pScreen)
+ {
+@@ -869,6 +1166,7 @@ #endif
+                   (&adapt->pPortPrivates[omaps->numOverlayPorts]);
+ 
+     for (i = 0; i < omaps->numOverlayPorts; i++) {
++        adapt->pPortPrivates[i].ptr = &pPortPriv[i];
+         pPortPriv[i].colorKey = OMAP_DEFAULT_CKEY;
+         pPortPriv[i].downscaling = OMAP_DOWNSCALING_POINT_SAMPLE;
+         pPortPriv[i].id = i;
+@@ -878,11 +1176,11 @@ #endif
+             pPortPriv[i].fileName = "/dev/fb2";
+ 
+         REGION_INIT(pScreen, &pPortPriv[i].clip, NullBox, 0);
+-        adapt->pPortPrivates[i].ptr = &pPortPriv[i];
+ 
+         fd = open(pPortPriv[i].fileName, O_RDWR);
+         if (!fd)
+             continue;
++        close(fd);
+ 
+         if (ioctl(fd, OMAPFB_GET_CAPS, &caps) == 0) {
+             if (caps & OMAPFB_CAPS_TEARSYNC)
+@@ -890,19 +1188,17 @@ #endif
+         }
+         pPortPriv[i].vsync = pPortPriv[i].vsyncCapable ? OMAP_VSYNC_TEAR :
+                                                          OMAP_VSYNC_NONE;
++        pPortPriv[i].ext_state = OMAP_EXT_NONE;
+         pPortPriv[i].omaps = omaps;
+ 
+-        close(fd);
++
+     }
+ 
+     adapt->nAttributes = NUM_ATTRIBUTES;
+     adapt->pAttributes = Attributes;
+     adapt->nImages = NUM_IMAGES;
+     adapt->pImages = Images;
+-    adapt->PutVideo = NULL;
+-    adapt->PutStill = NULL;
+-    adapt->GetVideo = NULL;
+-    adapt->GetStill = NULL;
++
+     adapt->PutImage = omapPutImage;
+     adapt->ReputImage = omapReputImage;
+     adapt->StopVideo = omapVideoStop;
+@@ -910,6 +1206,7 @@ #endif
+     adapt->SetPortAttribute = omapSetPortAttribute;
+     adapt->QueryBestSize = omapQueryBestSize;
+     adapt->QueryImageAttributes = omapQueryImageAttributes;
++    adapt->ClipNotify = omapClipNotify;
+ 
+     omaps->pAdaptor = adapt;
+ 
+@@ -920,6 +1217,9 @@ #endif
+     return adapt;
+ }
+ 
++/**
++ * Set up everything we need for Xv.
++ */
+ Bool
+ omapVideoInit(ScreenPtr pScreen)
+ {
+@@ -963,23 +1263,30 @@ omapVideoInit(ScreenPtr pScreen)
+     return TRUE;
+ }
+ 
++/**
++ * Shut down Xv, used on regeneration.
++ */
+ void
+ omapVideoFini(ScreenPtr pScreen)
+ {
+     KdScreenPriv(pScreen);
+     omapScreenInfo(pScreenPriv);
+-    KdVideoAdaptorPtr adapt = omaps->pAdaptor;
+     OmapPortPriv *pPortPriv;
+     int i;
+ 
+-    if (!adapt)
++    ENTER();
++
++    if (!omaps->pAdaptor)
+         return;
+ 
+     for (i = 0; i < omaps->numOverlayPorts; i++) {
+-        pPortPriv = (OmapPortPriv *)(&adapt->pPortPrivates[i].ptr);
+-        REGION_UNINIT(pScreen, &pPortPriv->clip);
++        pPortPriv = getOmapPortPriv(omaps, i);
++        if (pPortPriv->pDamage)
++            DamageDestroy(pPortPriv->pDamage);
+     }
+ 
+-    xfree(adapt);
++    xfree(omaps->pAdaptor);
+     omaps->pAdaptor = NULL;
++
++    LEAVE();
+ }

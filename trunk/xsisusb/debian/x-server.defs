@@ -1,0 +1,6 @@
+#!/bin/sh
+# x-server.defs - defines for the X server
+
+export DISPLAY_GEOM=800x480
+export DISPLAY_DPI=96
+export XLOGFILE=/tmp/xserver.log

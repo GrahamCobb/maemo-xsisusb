@@ -1,0 +1,355 @@
+diff --git a/dix/dispatch.c b/dix/dispatch.c
+index e2a7825..89423ca 100644
+--- a/dix/dispatch.c
++++ b/dix/dispatch.c
+@@ -3496,6 +3496,8 @@ CloseDownClient(register ClientPtr clien
+     Bool really_close_down = client->clientGone ||
+ 			     client->closeDownMode == DestroyAll;
+ 
++
++    ErrorF("closing down client\n");
+     if (!client->clientGone)
+     {
+ 	/* ungrab server if grabbing client dies */
+@@ -3574,6 +3576,7 @@ #endif
+ 	while (!clients[currentMaxClients-1])
+ 	    currentMaxClients--;
+     }
++    ErrorF("closing down client: done\n");
+ }
+ 
+ static void
+diff --git a/dix/events.c b/dix/events.c
+index 21fc07d..ba1054d 100644
+--- a/dix/events.c
++++ b/dix/events.c
+@@ -112,6 +112,8 @@ #ifdef HAVE_DIX_CONFIG_H
+ #include <dix-config.h>
+ #endif
+ 
++#undef DEBUG
++
+ #include <X11/X.h>
+ #include <X11/keysym.h>
+ #include "misc.h"
+diff --git a/dix/resource.c b/dix/resource.c
+index 39374cc..5858f1a 100644
+--- a/dix/resource.c
++++ b/dix/resource.c
+@@ -777,7 +777,11 @@ FreeClientResources(ClientPtr client)
+ 	    *head = this->next;
+ 	    if (rtype & RC_CACHED)
+ 		FlushClientCaches(this->id);
++            if (rtype & TypeMask == RT_WINDOW)
++                ErrorF("fcr: deleting window\n");
+ 	    (*DeleteFuncs[rtype & TypeMask])(this->value, this->id);
++            if (rtype & TypeMask == RT_WINDOW)
++                ErrorF("fcr: done\n");
+ 	    xfree(this);	    
+ 	}
+     }
+diff --git a/dix/window.c b/dix/window.c
+index 526b3ab..b6048d0 100644
+--- a/dix/window.c
++++ b/dix/window.c
+@@ -889,7 +889,9 @@ CrushTree(WindowPtr pWin)
+ 		event.u.destroyNotify.window = pChild->drawable.id;
+ 		DeliverEvents(pChild, &event, 1, NullWindow);		
+ 	    }
++            ErrorF("crush tree: freeing window resource\n");
+ 	    FreeResource(pChild->drawable.id, RT_WINDOW);
++            ErrorF("crush tree: done\n");
+ 	    pSib = pChild->nextSib;
+ #ifdef DO_SAVE_UNDERS
+ 	    if (pChild->saveUnder && pChild->viewable)
+@@ -927,7 +929,9 @@ DeleteWindow(pointer value, XID wid)
+     register WindowPtr pWin = (WindowPtr)value;
+     xEvent event;
+ 
++    ErrorF("deletewindow: about to unmap\n");
+     UnmapWindow(pWin, FALSE);
++    ErrorF("deletewindow: done\n");
+ 
+     CrushTree(pWin);
+ 
+@@ -3049,8 +3053,10 @@ UnmapWindow(register WindowPtr pWin, Boo
+     {
+ 	if (!fromConfigure)
+ 	{
++            ErrorF("unmap: about to validate/expose\n");
+ 	    (*pScreen->ValidateTree)(pLayerWin->parent, pWin, VTUnmap);
+ 	    (*pScreen->HandleExposures)(pLayerWin->parent);
++            ErrorF("unmap: done\n");
+ 	}
+ #ifdef DO_SAVE_UNDERS
+ 	if (DO_SAVE_UNDERS(pWin))
+diff --git a/fb/fbwindow.c b/fb/fbwindow.c
+index 968b5a6..8397688 100644
+--- a/fb/fbwindow.c
++++ b/fb/fbwindow.c
+@@ -322,6 +322,7 @@ fbPaintWindow(WindowPtr pWin, RegionPtr 
+     case PW_BACKGROUND:
+ 	switch (pWin->backgroundState) {
+ 	case None:
++            ErrorF("fbPaintWindow: BACKGROUND IS NONE, REFUSING TO DO ANYTHING USEFUL\n");
+ 	    break;
+ 	case ParentRelative:
+ 	    do {
+@@ -331,11 +332,13 @@ fbPaintWindow(WindowPtr pWin, RegionPtr 
+ 							     what);
+ 	    break;
+ 	case BackgroundPixmap:
++            ErrorF("fbPaintWindow: backpixmap fill\n");
+ 	    fbFillRegionTiled (&pWin->drawable,
+ 			       pRegion,
+ 			       pWin->background.pixmap);
+ 	    break;
+ 	case BackgroundPixel:
++            ErrorF("fbPaintWindow: backpixel fill of %d on (%d, %d) to (%d, %d)\n", pWin->background.pixel, pRegion->extents.x1, pRegion->extents.y1, pRegion->extents.x2, pRegion->extents.y2);
+ 	    fbFillRegionSolid (&pWin->drawable,
+ 			       pRegion,
+ 			       0,
+diff --git a/hw/kdrive/linux/tslib.c b/hw/kdrive/linux/tslib.c
+index 65d4d6a..1a6b078 100644
+--- a/hw/kdrive/linux/tslib.c
++++ b/hw/kdrive/linux/tslib.c
+@@ -33,6 +33,8 @@ #ifdef HAVE_KDRIVE_CONFIG_H
+ #include <kdrive-config.h>
+ #endif
+ 
++#undef DEBUG
++
+ #define NEED_EVENTS
+ #include <X11/X.h>
+ #include <X11/Xproto.h>
+diff --git a/hw/kdrive/omap/omap_draw.c b/hw/kdrive/omap/omap_draw.c
+index 64d54fd..f7e8aef 100644
+--- a/hw/kdrive/omap/omap_draw.c
++++ b/hw/kdrive/omap/omap_draw.c
+@@ -79,19 +79,18 @@ static void _X_INLINE omapAccumulateDama
+                                            RegionPtr region)
+ {
+     int i = 0;
+-    BoxPtr box = REGION_RECTS(region);
+-
+-    for (i = 0; i < REGION_NUM_RECTS(region); i++) {
+-        if (box->x1 < omaps->dirtyArea.x1)
+-            omaps->dirtyArea.x1 = box->x1;
+-        if (box->y1 < omaps->dirtyArea.y1)
+-            omaps->dirtyArea.y1 = box->y1;
+-        if (box->x2 > omaps->dirtyArea.x2)
+-            omaps->dirtyArea.x2 = box->x2;
+-        if (box->y2 > omaps->dirtyArea.y2)
+-            omaps->dirtyArea.y2 = box->y2;
+-        box++;
+-    }
++    BoxPtr box = REGION_EXTENTS(omaps->screen->pScreen, region);
++
++    if (box->x1 < omaps->dirtyArea.x1)
++        omaps->dirtyArea.x1 = box->x1;
++    if (box->y1 < omaps->dirtyArea.y1)
++        omaps->dirtyArea.y1 = box->y1;
++    if (box->x2 > omaps->dirtyArea.x2)
++        omaps->dirtyArea.x2 = box->x2;
++    if (box->y2 > omaps->dirtyArea.y2)
++        omaps->dirtyArea.y2 = box->y2;
++
++    ErrorF("omapAccDam: extents are (%d, %d) to (%d, %d)\n", box->x1, box->y1, box->x2, box->y2);
+ }
+ 
+ static void _X_INLINE omapCheckDSPDamage(OmapScreenInfo *omaps)
+@@ -141,7 +140,7 @@ static void omapFlushDamage(OmapScreenIn
+ 
+     omapCheckDSPDamage(omaps);
+ 
+-#if 0
++#if 1
+     DebugF("omapFlushDamage: updating (%d, %d) to (%d, %d)\n",
+            omaps->dirtyArea.x1, omaps->dirtyArea.y1,
+            omaps->dirtyArea.x2, omaps->dirtyArea.y2);
+@@ -206,9 +205,11 @@ #ifdef XSP
+     }
+ #endif
+ 
++#ifdef PROFILE_ME_HARDER
+     omaps->updates++;
+     if (omaps->updates > (5000 / OMAP_UPDATE_TIME))
+         omapVideoStats(omaps, time);
++#endif
+ 
+     region = DamageRegion(omaps->pDamage);
+     if (REGION_NOTEMPTY(omaps->screen->pScreen, region)) {
+diff --git a/hw/kdrive/omap/omap_video.c b/hw/kdrive/omap/omap_video.c
+index 032521b..902c1fb 100644
+--- a/hw/kdrive/omap/omap_video.c
++++ b/hw/kdrive/omap/omap_video.c
+@@ -562,7 +562,9 @@ omapDisplayFrame(KdScreenInfo *screen, O
+     if (pPortPriv->vsync)
+         updateWindow.format |= OMAPFB_FORMAT_FLAG_TEARSYNC;
+ 
++#ifdef PROFILE_ME_HARDER
+     pPortPriv->frames++;
++#endif
+ 
+     if (ioctl(pPortPriv->fd, OMAPFB_UPDATE_WINDOW, &updateWindow) != 0) {
+         /* If the update mode isn't manual (e.g. disabled for blanked
+diff --git a/hw/kdrive/src/kinput.c b/hw/kdrive/src/kinput.c
+index 03428f6..8bb99b5 100644
+--- a/hw/kdrive/src/kinput.c
++++ b/hw/kdrive/src/kinput.c
+@@ -27,6 +27,9 @@
+ #ifdef HAVE_CONFIG_H
+ #include <kdrive-config.h>
+ #endif
++
++#undef DEBUG
++
+ #include "kdrive.h"
+ #include "inputstr.h"
+ 
+diff --git a/mi/mieq.c b/mi/mieq.c
+index aec2371..23d75af 100644
+--- a/mi/mieq.c
++++ b/mi/mieq.c
+@@ -36,6 +36,8 @@ #if HAVE_DIX_CONFIG_H
+ #include <dix-config.h>
+ #endif
+ 
++#undef DEBUG
++
+ # define NEED_EVENTS
+ # include   <X11/X.h>
+ # include   <X11/Xmd.h>
+diff --git a/mi/miexpose.c b/mi/miexpose.c
+index 1ca5fc9..e597a74 100644
+--- a/mi/miexpose.c
++++ b/mi/miexpose.c
+@@ -496,6 +496,7 @@ miWindowExposures(pWin, prgn, other_expo
+     register RegionPtr prgn, other_exposed;
+ {
+     RegionPtr   exposures = prgn;
++    BoxRec total;
+     if (pWin->backStorage && prgn)
+ 	/*
+ 	 * in some cases, backing store will cause a different
+@@ -561,6 +562,11 @@ miWindowExposures(pWin, prgn, other_expo
+ 					     box.y2 - box.y1,
+ 					     FALSE);
+ 	}
++        total = *REGION_EXTENTS(pWin->drawable.pScreen, exposures);
++        ErrorF("miWindowExposures (%s): generating expose for (%d, %d) to (%d, %d)\n", pWin->parent ? "not root" : "GODDAMN ROOT", total.x1, total.y1, total.x2, total.y2);
++        /* horrific maemo hack: always expose the _entire_ root window. */
++        if (!pWin->parent)
++            REGION_COPY(pWin->drawable.pScreen, prgn, &pWin->clipList);
+ 	if (prgn && !REGION_NIL(prgn))
+ 	    (*pWin->drawable.pScreen->PaintWindowBackground)(pWin, prgn, PW_BACKGROUND);
+ 	if (clientInterested && exposures && !REGION_NIL(exposures))
+diff --git a/miext/damage/damage.c b/miext/damage/damage.c
+index 2e80011..0c4849f 100755
+--- a/miext/damage/damage.c
++++ b/miext/damage/damage.c
+@@ -287,6 +287,8 @@ #endif
+ 		(*pDamage->damageReport) (pDamage, &pDamage->damage, pDamage->closure);
+ 	    break;
+ 	case DamageReportNone:
++            tmpBox = *REGION_EXTENTS(pScreen, pDamageRegion);
++            ErrorF("no report: damaging (%d, %d) to (%d, %d)\n", tmpBox.x1, tmpBox.y1, tmpBox.x2, tmpBox.y2);
+ 	    REGION_UNION(pScreen, &pDamage->damage, &pDamage->damage,
+ 			 pDamageRegion);
+ 	    break;
+@@ -1586,10 +1588,17 @@ damagePaintWindow(WindowPtr pWindow,
+      * no damage is recorded
+      */
+     if ((what != PW_BACKGROUND || pWindow->backgroundState != None) &&
+-	getWindowDamage (pWindow))
++	getWindowDamage (pWindow)) {
+ 	damageDamageRegion (&pWindow->drawable, prgn, FALSE, -1);
++        if (!pWindow->parent)
++            ErrorF("damagePaintWindow: DAMAGING ROOT\n");
++    }
++    else if (!pWindow->parent) {
++        ErrorF("damagePaintWindow: NOT RECORDING ANY DAMAGE FOR ROOT PAINT\n");
++    }
+     if(what == PW_BACKGROUND) {
+ 	unwrap (pScrPriv, pScreen, PaintWindowBackground);
++        ErrorF("damage: painting window background\n");
+ 	(*pScreen->PaintWindowBackground) (pWindow, prgn, what);
+ 	wrap (pScrPriv, pScreen, PaintWindowBackground, damagePaintWindow);
+     } else {
+diff --git a/os/WaitFor.c b/os/WaitFor.c
+index 0457678..2edac9d 100644
+--- a/os/WaitFor.c
++++ b/os/WaitFor.c
+@@ -155,6 +155,7 @@ WaitForSomething(int *pClientsReady)
+     int selecterr;
+     int nready;
+     fd_set devicesReadable;
++    OsTimerPtr timer = NULL;
+     CARD32 now = 0;
+ #ifdef SMART_SCHEDULE
+     Bool    someReady = FALSE;
+@@ -195,10 +196,15 @@ #ifdef SMART_SCHEDULE
+ 	else
+ 	{
+ #endif
+-        wt = NULL;
+-	if (timers)
++        waittime.tv_sec = 0;
++        waittime.tv_usec = 250 * 1000;
++        wt = &waittime;
++        now = GetTimeInMillis();
++        timeout = 0;
++	for (timer = timers; timer; timer = timer->next)
+         {
+-            now = GetTimeInMillis();
++            if ((timers->expires - now) >= timeout)
++                continue;
+ 	    timeout = timers->expires - now;
+             if (timeout < 0)
+                 timeout = 0;
+@@ -215,6 +221,8 @@ #endif
+ 	BlockHandler((pointer)&wt, (pointer)&LastSelectMask);
+ 	if (NewOutputPending)
+ 	    FlushAllOutput();
++        now = GetTimeInMillis();
++        ErrorF("before select: waiting %lu sec, %lu ms\n", wt->tv_sec, wt->tv_usec / 1000);
+ 	/* keep this check close to select() call to minimize race */
+ 	if (dispatchException)
+ 	    i = -1;
+@@ -227,6 +235,7 @@ #endif
+ 	{
+ 	    i = Select (MaxClients, &LastSelectMask, NULL, NULL, wt);
+ 	}
++        ErrorF("after select: actually waited %lu ms; %lu left\n", GetTimeInMillis() - now, wt->tv_usec / 1000);
+ 	selecterr = GetErrno();
+ 	WakeupHandler(i, (pointer)&LastSelectMask);
+ #ifdef SMART_SCHEDULE
+@@ -435,6 +444,8 @@ DoTimer(OsTimerPtr timer, CARD32 now, Os
+     *prev = timer->next;
+     timer->next = NULL;
+     newTime = (*timer->callback)(timer, now, timer->arg);
++    if (timer->callback == omapDamageTimer)
++        ErrorF("next run for timer is %lu\n", newTime);
+     if (newTime)
+ 	TimerSet(timer, 0, newTime, timer->callback, timer->arg);
+ }
+diff --git a/os/connection.c b/os/connection.c
+index ef05789..c8c346d 100644
+--- a/os/connection.c
++++ b/os/connection.c
+@@ -1000,6 +1000,7 @@ CloseDownConnection(ClientPtr client)
+ {
+     OsCommPtr oc = (OsCommPtr)client->osPrivate;
+ 
++    ErrorF("closing down connection\n");
+     if (oc->output && oc->output->count)
+ 	FlushClient(client, oc, (char *)NULL, 0);
+ #ifdef XDMCP
+@@ -1009,6 +1010,7 @@ #endif
+     client->osPrivate = (pointer)NULL;
+     if (auditTrailLevel > 1)
+ 	AuditF("client %d disconnected\n", client->index);
++    ErrorF("closing down connection: done\n");
+ }
+ 
+ _X_EXPORT void

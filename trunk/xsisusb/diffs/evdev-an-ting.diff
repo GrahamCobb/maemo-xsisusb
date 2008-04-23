@@ -1,0 +1,634 @@
+diff --git a/dix/devices.c b/dix/devices.c
+index 28a0e1e..b5c691a 100644
+--- a/dix/devices.c
++++ b/dix/devices.c
+@@ -250,7 +250,7 @@ #endif
+ #ifdef XKB
+         if (!noXkbExtension) {
+             bzero(&names, sizeof(names));
+-            XkbSetRulesDflts("base", "pc105", "us", NULL, NULL);
++            XkbSetRulesDflts("base", "evdev", "us", NULL, NULL);
+             XkbInitKeyboardDeviceStruct(pDev, &names, &keySyms, modMap,
+                                         CoreKeyboardBell, CoreKeyboardCtl);
+         }
+diff --git a/hw/kdrive/linux/evdev.c b/hw/kdrive/linux/evdev.c
+index 13cbc57..ac64976 100644
+--- a/hw/kdrive/linux/evdev.c
++++ b/hw/kdrive/linux/evdev.c
+@@ -2,175 +2,165 @@
+  * $Id$
+  *
+  * Copyright © 2004 Keith Packard
++ * Copyright © 2007 Nokia Corporation
+  *
+- * Permission to use, copy, modify, distribute, and sell this software and its
++ * Permission to use, copy, modify, distribute and sell this software and its
+  * documentation for any purpose is hereby granted without fee, provided that
+  * the above copyright notice appear in all copies and that both that
+  * copyright notice and this permission notice appear in supporting
+- * documentation, and that the name of Keith Packard not be used in
+- * advertising or publicity pertaining to distribution of the software without
+- * specific, written prior permission.  Keith Packard makes no
+- * representations about the suitability of this software for any purpose.  It
+- * is provided "as is" without express or implied warranty.
++ * documentation, and that the names of the authors and/or copyright holders
++ * not be used in advertising or publicity pertaining to distribution of the
++ * software without specific, written prior permission.  The authors and
++ * copyright holders make no representations about the suitability of this
++ * software for any purpose.  It is provided "as is" without any express
++ * or implied warranty.
+  *
+- * KEITH PACKARD DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
+- * INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO
+- * EVENT SHALL KEITH PACKARD BE LIABLE FOR ANY SPECIAL, INDIRECT OR
+- * CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+- * DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+- * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+- * PERFORMANCE OF THIS SOFTWARE.
++ * THE AUTHORS AND COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO
++ * THIS SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
++ * FITNESS, IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
++ * ANY SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
++ * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
++ * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
++ * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++ *
++ * Authors: Keith Packard <keithp@keithp.com>
++ *          Daniel Stone <daniel.stone@nokia.com>
+  */
+ 
+ #ifdef HAVE_CONFIG_H
+ #include <kdrive-config.h>
+ #endif
+-#define NEED_EVENTS
+-#include <errno.h>
++
++#include <dirent.h>
++#include <sys/types.h>
+ #include <linux/input.h>
++
++#define NEED_EVENTS
+ #include <X11/X.h>
+ #include <X11/Xproto.h>
+ #include <X11/Xpoll.h>
++
+ #include "inputstr.h"
+-#include "scrnintstr.h"
+ #include "kdrive.h"
+ 
+-#define NUM_EVENTS  128
+-#define ABS_UNSET   -65535
+-
+-#define BITS_PER_LONG (sizeof(long) * 8)
+-#define NBITS(x) ((((x)-1)/BITS_PER_LONG)+1)
+-#define ISBITSET(x,y) ((x)[LONG(y)] & BIT(y))
+-#define OFF(x)   ((x)%BITS_PER_LONG)
+-#define LONG(x)  ((x)/BITS_PER_LONG)
+-#define BIT(x)         (1 << OFF(x))
+-#define SETBIT(x,y) ((x)[LONG(y)] |= BIT(y))
+-#define CLRBIT(x,y) ((x)[LONG(y)] &= ~BIT(y))
+-#define ASSIGNBIT(x,y,z)    ((x)[LONG(y)] = ((x)[LONG(y)] & ~BIT(y)) | (z << OFF(y)))
+-
+-typedef struct _kevdevMouse {
+-    /* current device state */
+-    int                            rel[REL_MAX + 1];
+-    int                            abs[ABS_MAX + 1];
+-    int                            prevabs[ABS_MAX + 1];
+-    long                    key[NBITS(KEY_MAX + 1)];
+-    
+-    /* supported device info */
+-    long                    relbits[NBITS(REL_MAX + 1)];
+-    long                    absbits[NBITS(ABS_MAX + 1)];
+-    long                    keybits[NBITS(KEY_MAX + 1)];
+-    struct input_absinfo    absinfo[ABS_MAX + 1];
+-    int                            max_rel;
+-    int                            max_abs;
++#ifndef BITS_PER_LONG
++#define BITS_PER_LONG           (sizeof(unsigned long) * 8)
++#endif
++
++#define NBITS(x)                ((((x)-1)/BITS_PER_LONG)+1)
++#define LONG(x)                 ((x)/BITS_PER_LONG)
++#define MASK(x)                 (1UL << ((x) & (BITS_PER_LONG - 1)))
++
++#ifndef test_bit
++#define test_bit(bit, array)    (!!(array[LONG(bit)] & MASK(bit)))
++#endif
++#ifndef set_bit
++#define set_bit(bit, array)     (array[LONG(bit)] |= MASK(bit))
++#endif
++#ifndef clear_bit
++#define clear_bit(bit, array)   (array[LONG(bit)] &= ~MASK(bit))
++#endif
+ 
+-    int                     fd;
+-} Kevdev;
++struct evdev_info {
++    int fd;
++};
+ 
+ static void
+-EvdevMotion (KdPointerInfo    *pi)
++evdev_handle_key(KdKeyboardInfo *ki, struct input_event *ev)
+ {
+-    Kevdev                *ke = pi->driverPrivate;
+-    int                        i;
+-
+-    for (i = 0; i <= ke->max_rel; i++)
+-        if (ke->rel[i])
+-        {
+-            int a;
+-            ErrorF ("rel");
+-            for (a = 0; a <= ke->max_rel; a++)
+-            {
+-                if (ISBITSET (ke->relbits, a))
+-                    ErrorF (" %d=%d", a, ke->rel[a]);
+-                ke->rel[a] = 0;
+-            }
+-            ErrorF ("\n");
+-            break;
+-        }
+-    for (i = 0; i < ke->max_abs; i++)
+-        if (ke->abs[i] != ke->prevabs[i])
+-        {
+-            int a;
+-            ErrorF ("abs");
+-            for (a = 0; a <= ke->max_abs; a++)
+-            {
+-                if (ISBITSET (ke->absbits, a))
+-                    ErrorF (" %d=%d", a, ke->abs[a]);
+-                ke->prevabs[a] = ke->abs[a];
+-            }
+-            ErrorF ("\n");
+-            break;
+-        }
++    KdEnqueueKeyboardEvent(ki, ev->code, !!ev->value);
+ }
+ 
+ static void
+-EvdevRead (int evdevPort, void *closure)
++evdev_read(int fd, void *closure)
+ {
+-    KdPointerInfo                *pi = closure;
+-    Kevdev                       *ke = pi->driverPrivate;
+-    int                        i;
+-    struct input_event        events[NUM_EVENTS];
+-    int                        n;
+-
+-    n = read (evdevPort, &events, NUM_EVENTS * sizeof (struct input_event));
+-    if (n <= 0)
+-        return;
+-    n /= sizeof (struct input_event);
+-    for (i = 0; i < n; i++)
+-    {
+-        switch (events[i].type) {
++    int n;
++    struct input_event ev;
++
++    while ((n = read(fd, &ev, sizeof(struct input_event)))) {
++        /* The kernel guarantees that we'll always read complete events. */
++        if (n < sizeof(struct input_event))
++            continue;
++
++        switch (ev.type) {
+         case EV_SYN:
+             break;
+         case EV_KEY:
+-            EvdevMotion (pi);
+-            ASSIGNBIT(ke->key,events[i].code, events[i].value);
+-            if (events[i].code < 0x100)
+-                ErrorF ("key %d %d\n", events[i].code, events[i].value);
+-            else
+-                ErrorF ("key 0x%x %d\n", events[i].code, events[i].value);
++            evdev_handle_key(closure, &ev);
+             break;
++#if 0
+         case EV_REL:
+-            ke->rel[events[i].code] += events[i].value;
++            evdev_handle_motion(closure, Relative, &event);
+             break;
+         case EV_ABS:
+-            ke->abs[events[i].code] = events[i].value;
++            evdev_handle_motion(closure, Absolute, &event);
+             break;
++#endif
+         }
+     }
+-    EvdevMotion (pi);
+ }
+ 
+-int EvdevInputType;
++static char *
++find_dev_by_name(const char *name)
++{
++    char *devname, devpath[PATH_MAX];
++    DIR *inputdir;
++    struct dirent *inputent;
++    int fd;
++    
++    if (!(inputdir = opendir("/dev/input"))) {
++        ErrorF("evdev: Couldn't open /dev/input\n");
++        return NULL;
++    }
+ 
+-char *kdefaultEvdev[] =  {
+-    "/dev/input/event0",
+-    "/dev/input/event1",
+-    "/dev/input/event2",
+-    "/dev/input/event3",
+-};
++    devname = xcalloc(1, strlen(name) + 1);
+ 
+-#define NUM_DEFAULT_EVDEV    (sizeof (kdefaultEvdev) / sizeof (kdefaultEvdev[0]))
++    while ((inputent = readdir(inputdir))) {
++        snprintf(devpath, PATH_MAX, "/dev/input/%s", inputent->d_name);
++        fd = open(devpath, O_RDWR);
++
++        if (!ioctl(fd, EVIOCGNAME(strlen(name) + 1), devname)) {
++            close(fd);
++            continue;
++        }
++        close(fd);
++
++        if (strncmp(devname, name, sizeof(devname)) == 0 &&
++            devname[strlen(name)] == '\0') {
++            xfree(devname);
++            return xstrdup(devpath);
++        }
++    }
++
++    xfree(devname);
++    return NULL;
++}
+ 
+ static Status
+-EvdevInit (KdPointerInfo *pi)
++evdev_keyboard_init (KdKeyboardInfo *ki)
+ {
+-    int                i;
+-    int                fd;
+-    int                n = 0;
+-    char        *prot;
+-
+-    if (!pi->path) {
+-        for (i = 0; i < NUM_DEFAULT_EVDEV; i++) {
+-            fd = open (kdefaultEvdev[i], 2);
+-                if (fd >= 0) {
+-                    pi->path = KdSaveString (kdefaultEvdev[i]);
+-                    break;
+-                }
++    char *path;
++    InputOption *option;
++    struct evdev_info *evdev;
++
++    evdev = xcalloc(1, sizeof(struct evdev_info));
++    if (!evdev)
++        return BadAlloc;
++    ki->driverPrivate = evdev;
++
++    if (!ki->path) {
++        for (option = ki->options; option; option = option->next) {
++            if (strcmp(option->key, "name") == 0) {
++                path = find_dev_by_name(option->value);
++                if (path)
++                    ki->path = KdSaveString(path);
++                
++                break;
+             }
+-    }
+-    else {
+-        fd = open (pi->path, 2);
+-        if (fd < 0) {
+-            ErrorF("Failed to open evdev device %s\n", pi->path);
++        }
++        
++        if (!ki->path) {
++            ErrorF("evdev: No devices found\n");
+             return BadMatch;
+         }
+     }
+@@ -179,134 +169,86 @@ EvdevInit (KdPointerInfo *pi)
+ }
+ 
+ static Status
+-EvdevEnable (KdPointerInfo *pi)
++evdev_keyboard_enable (KdKeyboardInfo *ki)
+ {        
+     int fd;
++    struct evdev_info *evdev = ki->driverPrivate;
+ 
+-    if (!pi || !pi->path)
++    if (!ki->path)
+         return BadImplementation;
+ 
+-    fd = open(pi->path, 2);
+-    if (fd < 0)
+-        return BadMatch;
+-
+-    unsigned long   ev[NBITS(EV_MAX)];
+-    Kevdev            *ke;
+-        
+-    if (ioctl (fd, EVIOCGBIT(0 /*EV*/, sizeof (ev)), ev) < 0)
+-    {
+-        perror ("EVIOCGBIT 0");
+-        close (fd);
++    fd = open(ki->path, O_RDWR);
++    if (fd < 0) {
++        evdev->fd = -1;
+         return BadMatch;
+     }
+-    ke = xalloc (sizeof (Kevdev));
+-    if (!ke)
+-    {
+-        close (fd);
+-        return BadAlloc;
+-    }
+-    memset (ke, '\0', sizeof (Kevdev));
+-    if (ISBITSET (ev, EV_KEY))
+-    {
+-        if (ioctl (fd, EVIOCGBIT (EV_KEY, sizeof (ke->keybits)),
+-                   ke->keybits) < 0)
+-        {
+-            perror ("EVIOCGBIT EV_KEY");
+-            xfree (ke);
+-            close (fd);
+-            return BadMatch;
+-        }
+-    }
+-    if (ISBITSET (ev, EV_REL))
+-    {
+-        if (ioctl (fd, EVIOCGBIT (EV_REL, sizeof (ke->relbits)),
+-                       ke->relbits) < 0)
+-        {
+-            perror ("EVIOCGBIT EV_REL");
+-            xfree (ke);
+-            close (fd);
+-            return BadMatch;
+-        }
+-        for (ke->max_rel = REL_MAX; ke->max_rel >= 0; ke->max_rel--)
+-            if (ISBITSET(ke->relbits, ke->max_rel))
+-                break;
+-    }
+-    if (ISBITSET (ev, EV_ABS))
+-    {
+-        int i;
+-
+-        if (ioctl (fd, EVIOCGBIT (EV_ABS, sizeof (ke->absbits)),
+-                   ke->absbits) < 0)
+-            {
+-            perror ("EVIOCGBIT EV_ABS");
+-            xfree (ke);
+-            close (fd);
+-            return BadMatch;
+-        }
+-        for (ke->max_abs = ABS_MAX; ke->max_abs >= 0; ke->max_abs--)
+-            if (ISBITSET(ke->absbits, ke->max_abs))
+-                break;
+-        for (i = 0; i <= ke->max_abs; i++)
+-        {
+-            if (ISBITSET (ke->absbits, i))
+-                if (ioctl (fd, EVIOCGABS(i), &ke->absinfo[i]) < 0)
+-                {
+-                    perror ("EVIOCGABS");
+-                    break;
+-                }
+-            ke->prevabs[i] = ABS_UNSET;
+-        }
+-        if (i <= ke->max_abs)
+-        {
+-            xfree (ke);
+-            close (fd);
+-            return BadValue;
+-        }
+-    }
+-    if (!KdRegisterFd (fd, EvdevRead, pi)) {
+-        xfree (ke);
++
++    if (!KdRegisterFd(fd, evdev_read, ki)) {
++        evdev->fd = -1;
+         close (fd);
+         return BadAlloc;
+     }
+-    pi->driverPrivate = ke;
++
++    evdev->fd = fd;
++
+     return Success;
+ }
+ 
+ static void
+-EvdevDisable (KdPointerInfo *pi)
++evdev_set_led(struct evdev_info *evdev, int led, int value)
++{
++    struct input_event ev;
++
++    ev.type = EV_LED;
++    ev.code = led;
++    ev.value = value;
++    write(evdev->fd, &ev, sizeof(ev));
++}
++
++static void
++evdev_keyboard_leds(KdKeyboardInfo *ki, int leds)
+ {
+-    Kevdev              *ke;
++    struct evdev_info *evdev = ki->driverPrivate;
+ 
+-    if (!pi || !pi->driverPrivate)
+-        return;
++    evdev_set_led(evdev, LED_CAPSL, !!(leds & (1 << 0)));
++    evdev_set_led(evdev, LED_NUML, !!(leds & (1 << 1)));
++    evdev_set_led(evdev, LED_SCROLLL, !!(leds & (1 << 2)));
+ 
+-    KdUnregisterFd (pi, ke->fd, TRUE);
+-    xfree (ke);
+-    pi->driverPrivate = 0;
++    return;
+ }
+ 
+ static void
+-EvdevFini (KdPointerInfo *pi)
++evdev_keyboard_disable (KdKeyboardInfo *ki)
+ {
++    struct evdev_info *evdev = ki->driverPrivate;
++
++    KdUnregisterFd(ki, evdev->fd, TRUE);
+ }
+ 
+-KdPointerDriver LinuxEvdevMouseDriver = {
+-    "evdev",
+-    EvdevInit,
+-    EvdevEnable,
+-    EvdevDisable,
+-    EvdevFini,
+-    NULL,
+-    NULL,
+-};
++static void
++evdev_keyboard_fini (KdKeyboardInfo *ki)
++{
++    xfree(ki->driverPrivate);
++    ki->driverPrivate = NULL;
++}
+ 
+ #if 0
+-KdKeyboardFuncs LinuxEvdevKeyboardFuncs = {
+-    EvdevKbdLoad,
+-    EvdevKbdInit,
+-    EvdevKbdLeds,
+-    EvdevKbdBell,
+-    EvdevKbdFini,
+-    0,
++KdPointerDriver LinuxEvdevPointerDriver = {
++    .name = "evdev",
++    .Init = evdev_pointer_init,
++    .Enable = evdev_pointer_enable,
++    .Disable = evdev_pointer_disable,
++    .Fini = evdev_pointer_fini,
+ };
+ #endif
++
++KdKeyboardDriver LinuxEvdevKeyboardDriver = {
++#if 0
++    .load = evdev_keyboard_load,
++#endif
++    .Init = evdev_keyboard_init,
++    .Enable = evdev_keyboard_enable,
++    .Disable = evdev_keyboard_disable,
++    .Fini = evdev_keyboard_fini,
++    .Leds = evdev_keyboard_leds,
++};
+diff --git a/hw/kdrive/linux/tslib.c b/hw/kdrive/linux/tslib.c
+index 3c012eb..8eb191a 100644
+--- a/hw/kdrive/linux/tslib.c
++++ b/hw/kdrive/linux/tslib.c
+@@ -311,6 +311,7 @@ TslibInit (KdPointerInfo *pi)
+     struct TslibPrivate *private = NULL;
+     char devpath[PATH_MAX], devname[64];
+     CARD8 bits[(EV_MAX / 8) + 1];
++    InputOption *option;
+ 
+     if (!pi || !pi->dixdev)
+         return !Success;
+@@ -370,6 +371,9 @@ TslibInit (KdPointerInfo *pi)
+     pi->nButtons = 8;
+     pi->inputClass = KD_TOUCHSCREEN;
+ 
++    for (option = pi->options; option; option = option->next)
++        ErrorF("TSLIB: Option '%s': '%s'\n", option->key, option->value); /* DNC */
++
+     return Success;
+ }
+ 
+diff --git a/hw/kdrive/src/kdrive.h b/hw/kdrive/src/kdrive.h
+index 506383a..ae3a3bf 100644
+--- a/hw/kdrive/src/kdrive.h
++++ b/hw/kdrive/src/kdrive.h
+@@ -888,7 +888,8 @@ KdRingBell (KdKeyboardInfo      *ki,
+             int                 duration);
+ 
+ extern KdPointerDriver	LinuxMouseDriver;
+-extern KdPointerDriver	LinuxEvdevDriver;
++extern KdKeyboardDriver	LinuxEvdevKeyboardDriver;
++extern KdPointerDriver	LinuxEvdevPointerDriver;
+ extern KdPointerDriver	Ps2MouseDriver;
+ extern KdPointerDriver	BusMouseDriver;
+ extern KdPointerDriver	MsMouseDriver;
+diff --git a/hw/kdrive/src/kinput.c b/hw/kdrive/src/kinput.c
+index 664c60b..0a4eb21 100644
+--- a/hw/kdrive/src/kinput.c
++++ b/hw/kdrive/src/kinput.c
+@@ -794,7 +794,7 @@ #ifndef XKB
+             if (XkbInitialMap) 
+                 names.keymap = XkbInitialMap;
+ 
+-            XkbSetRulesDflts ("base", "pc105", "us", NULL, NULL);
++            XkbSetRulesDflts ("base", "evdev", "us", NULL, NULL);
+             ret = XkbInitKeyboardDeviceStruct (pDevice,
+                                                &names,
+                                                &ki->keySyms,
+@@ -1103,7 +1103,9 @@ KdParseKeyboard (char *arg)
+ {
+     char            save[1024];
+     char            delim;
+-    KdKeyboardInfo     *ki = NULL;
++    KdKeyboardInfo  *ki = NULL;
++    InputOption     *options = NULL, **tmpo = NULL, *newopt = NULL;
++    int             i;
+ 
+     ki = KdNewKeyboard();
+     if (!ki)
+@@ -1145,7 +1147,37 @@ #endif
+     else
+         ki->driverPrivate = xstrdup(save);
+ 
+-    /* FIXME actually implement options */
++    arg = KdParseFindNext(arg, ",", save, &delim);
++
++    while (delim == ',') {
++        newopt = (InputOption *) xalloc(sizeof (InputOption));
++        if (!newopt)
++        {
++            KdFreeKeyboard(ki);
++            return NULL;
++        }
++        bzero(newopt, sizeof (InputOption));
++
++        for (tmpo = &options; *tmpo; tmpo = &(*tmpo)->next);
++        *tmpo = newopt;
++
++        if (strchr(arg, '='))
++        {
++            i = (strchr(arg, '=') - arg);
++            newopt->key = (char *)xalloc(i + 1);
++            strncpy(newopt->key, arg, i + 1);
++            newopt->value = xstrdup(strchr(arg, '=') + 1);
++        }
++        else
++        {
++            newopt->key = xstrdup(save);
++            newopt->value = NULL;
++        }
++        newopt->next = NULL;
++    }
++
++    if (options)
++        ki->options = options;
+ 
+     return ki;
+ }
+@@ -1234,14 +1266,14 @@ KdParsePointer (char *arg)
+             }
+             bzero(newopt, sizeof (InputOption));
+ 
+-            for (tmpo = &options; *tmpo; tmpo = &(*tmpo)->next)
++            for (tmpo = &options; *tmpo; tmpo = &(*tmpo)->next);
+             *tmpo = newopt;
+ 
+             if (strchr(arg, '='))
+             {
+                 i = (strchr(arg, '=') - arg);
+-                newopt->key = (char *)xalloc(i+1);
+-                strncpy(newopt->key, arg, i+1);
++                newopt->key = (char *)xalloc(i + 1);
++                strncpy(newopt->key, arg, i + 1);
+                 newopt->value = xstrdup(strchr(arg, '=') + 1);
+             }
+             else
+diff --git a/hw/kdrive/omap/omapinit.c b/hw/kdrive/omap/omapinit.c
+index 1bf8486..cc20b7a 100644
+--- a/hw/kdrive/omap/omapinit.c
++++ b/hw/kdrive/omap/omapinit.c
+@@ -56,10 +56,10 @@ InitInput (int argc, char **argv)
+ 
+     ENTER();
+ 
+-    KdAddKeyboardDriver(&LinuxKeyboardDriver);
++    KdAddKeyboardDriver(&LinuxEvdevKeyboardDriver);
+     KdAddPointerDriver(&TsDriver);
+ 
+-    ki = KdParseKeyboard("keyboard");
++    ki = KdParseKeyboard("evdev,name=LM8323 keypad");
+     KdAddKeyboard(ki);
+ 
+     KdInitInput();

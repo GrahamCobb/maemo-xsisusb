@@ -1,0 +1,1251 @@
+commit 3696adb1094d8dedc70185b8b5754e33d279aba7
+Author: Matthew Allum <mallum@o-hand.com>
+Date:   Wed Nov 1 20:24:44 2006 +0200
+
+    fb: argument reduction in fbComposite path
+    Perform a round of argument reduction (collapse 12 arguments into one struct)
+    on the fbComposite paths.
+
+diff --git a/fb/fbcompose.c b/fb/fbcompose.c
+index b1903e9..4a01463 100644
+--- a/fb/fbcompose.c
++++ b/fb/fbcompose.c
+@@ -3557,18 +3557,7 @@ fbCompositeRect (const FbComposeData *da
+ }
+ 
+ void
+-fbCompositeGeneral (CARD8	op,
+-		    PicturePtr	pSrc,
+-		    PicturePtr	pMask,
+-		    PicturePtr	pDst,
+-		    INT16	xSrc,
+-		    INT16	ySrc,
+-		    INT16	xMask,
+-		    INT16	yMask,
+-		    INT16	xDst,
+-		    INT16	yDst,
+-		    CARD16	width,
+-		    CARD16	height)
++fbCompositeGeneral (FbComposeData *params)
+ {
+     RegionRec	    region;
+     int		    n;
+@@ -3576,94 +3565,96 @@ fbCompositeGeneral (CARD8	op,
+     Bool	    srcRepeat = FALSE;
+     Bool	    maskRepeat = FALSE;
+     int		    w, h;
++    FbComposeData   nparams;
+     CARD32 _scanline_buffer[SCANLINE_BUFFER_LENGTH*3];
+     CARD32 *scanline_buffer = _scanline_buffer;
+-    FbComposeData compose_data;
+     
+-    if (pSrc->pDrawable)
+-        srcRepeat = pSrc->repeatType == RepeatNormal && !pSrc->transform
+-                    && (pSrc->pDrawable->width != 1 || pSrc->pDrawable->height != 1);
+-
+-    if (pMask && pMask->pDrawable)
+-	maskRepeat = pMask->repeatType == RepeatNormal && !pMask->transform
+-                     && (pMask->pDrawable->width != 1 || pMask->pDrawable->height != 1);
+-
+-    if (op == PictOpOver && !pMask && !pSrc->transform && !PICT_FORMAT_A(pSrc->format) && !pSrc->alphaMap)
+-        op = PictOpSrc;
++    if (params->src->pDrawable)
++        srcRepeat = params->src->repeatType == RepeatNormal &&
++                    !params->src->transform &&
++                    (params->src->pDrawable->width != 1 ||
++                     params->src->pDrawable->height != 1);
++
++    if (params->mask && params->mask->pDrawable)
++	maskRepeat = params->mask->repeatType == RepeatNormal &&
++                     !params->mask->transform &&
++                     (params->mask->pDrawable->width != 1 ||
++                      params->mask->pDrawable->height != 1);
+ 
+     if (!miComputeCompositeRegion (&region,
+-				   pSrc,
+-				   pMask,
+-				   pDst,
+-				   xSrc,
+-				   ySrc,
+-				   xMask,
+-				   yMask,
+-				   xDst,
+-				   yDst,
+-				   width,
+-				   height))
++				   params->src,
++				   params->mask,
++				   params->dest,
++				   params->xSrc,
++				   params->ySrc,
++				   params->xMask,
++				   params->yMask,
++				   params->xDest,
++				   params->yDest,
++				   params->width,
++				   params->height))
+ 	    return;
+ 
+-    compose_data.op = op;
+-    compose_data.src = pSrc;
+-    compose_data.mask = pMask;
+-    compose_data.dest = pDst;
+-    if (width > SCANLINE_BUFFER_LENGTH)
+-        scanline_buffer = (CARD32 *) malloc(width * 3 * sizeof(CARD32));
++    memcpy(&nparams, params, sizeof(FbComposeData));
++    if (params->width > SCANLINE_BUFFER_LENGTH)
++        scanline_buffer = (CARD32 *) malloc(params->width * 3 * sizeof(CARD32));
++
++    if (params->op == PictOpOver && !params->mask && !params->src->transform &&
++        !PICT_FORMAT_A(params->src->format) && !params->src->alphaMap)
++        nparams.op = PictOpSrc;
+ 
+     n = REGION_NUM_RECTS (&region);
+     pbox = REGION_RECTS (&region);
+     while (n--)
+     {
+ 	h = pbox->y2 - pbox->y1;
+-	compose_data.ySrc = pbox->y1 - yDst + ySrc;
+-	compose_data.yMask = pbox->y1 - yDst + yMask;
+-	compose_data.yDest = pbox->y1;
++	nparams.ySrc = pbox->y1 - params->yDest + params->ySrc;
++	nparams.yMask = pbox->y1 - params->yDest + params->yMask;
++	nparams.yDest = pbox->y1;
+ 	while (h)
+ 	{
+-	    compose_data.height = h;
++	    nparams.height = h;
+ 	    w = pbox->x2 - pbox->x1;
+-	    compose_data.xSrc = pbox->x1 - xDst + xSrc;
+-	    compose_data.xMask = pbox->x1 - xDst + xMask;
+-	    compose_data.xDest = pbox->x1;
++	    nparams.xSrc = pbox->x1 - params->xDest + params->xSrc;
++	    nparams.xMask = pbox->x1 - params->xDest + params->xMask;
++	    nparams.xDest = pbox->x1;
+ 	    if (maskRepeat)
+ 	    {
+-		compose_data.yMask = mod (compose_data.yMask, pMask->pDrawable->height);
+-		if (compose_data.height > pMask->pDrawable->height - compose_data.yMask)
+-		    compose_data.height = pMask->pDrawable->height - compose_data.yMask;
++		nparams.yMask = mod (nparams.yMask, params->mask->pDrawable->height);
++		if (nparams.height > params->mask->pDrawable->height - nparams.yMask)
++		    nparams.height = params->mask->pDrawable->height - nparams.yMask;
+ 	    }
+ 	    if (srcRepeat)
+ 	    {
+-		compose_data.ySrc = mod (compose_data.ySrc, pSrc->pDrawable->height);
+-		if (compose_data.height > pSrc->pDrawable->height - compose_data.ySrc)
+-		    compose_data.height = pSrc->pDrawable->height - compose_data.ySrc;
++		nparams.ySrc = mod (nparams.ySrc, params->src->pDrawable->height);
++		if (nparams.height > params->src->pDrawable->height - nparams.ySrc)
++		    nparams.height = params->src->pDrawable->height - nparams.ySrc;
+ 	    }
+ 	    while (w)
+ 	    {
+-		compose_data.width = w;
++		nparams.width = w;
+ 		if (maskRepeat)
+ 		{
+-		    compose_data.xMask = mod (compose_data.xMask, pMask->pDrawable->width);
+-		    if (compose_data.width > pMask->pDrawable->width - compose_data.xMask)
+-			compose_data.width = pMask->pDrawable->width - compose_data.xMask;
++		    nparams.xMask = mod (nparams.xMask, params->mask->pDrawable->width);
++		    if (nparams.width > params->mask->pDrawable->width - nparams.xMask)
++			nparams.width = params->mask->pDrawable->width - nparams.xMask;
+ 		}
+ 		if (srcRepeat)
+ 		{
+-		    compose_data.xSrc = mod (compose_data.xSrc, pSrc->pDrawable->width);
+-		    if (compose_data.width > pSrc->pDrawable->width - compose_data.xSrc)
+-			compose_data.width = pSrc->pDrawable->width - compose_data.xSrc;
++		    nparams.xSrc = mod (nparams.xSrc, params->src->pDrawable->width);
++		    if (nparams.width > params->src->pDrawable->width - nparams.xSrc)
++			nparams.width = params->src->pDrawable->width - nparams.xSrc;
+ 		}
+-		fbCompositeRect(&compose_data, scanline_buffer);
+-		w -= compose_data.width;
+-		compose_data.xSrc += compose_data.width;
+-		compose_data.xMask += compose_data.width;
+-		compose_data.xDest += compose_data.width;
++		fbCompositeRect(&nparams, scanline_buffer);
++		w -= nparams.width;
++		nparams.xSrc += nparams.width;
++		nparams.xMask += nparams.width;
++		nparams.xDest += nparams.width;
+ 	    }
+-	    h -= compose_data.height;
+-	    compose_data.ySrc += compose_data.height;
+-	    compose_data.yMask += compose_data.height;
+-	    compose_data.yDest += compose_data.height;
++	    h -= nparams.height;
++	    nparams.ySrc += nparams.height;
++	    nparams.yMask += nparams.height;
++	    nparams.yDest += nparams.height;
+     }
+ 	pbox++;
+     }
+diff --git a/fb/fbpict.c b/fb/fbpict.c
+index c208643..c83fe0b 100644
+--- a/fb/fbpict.c
++++ b/fb/fbpict.c
+@@ -37,19 +37,6 @@ #include "mipict.h"
+ #include "fbpict.h"
+ #include "fbmmx.h"
+ 
+-typedef void	(*CompositeFunc) (CARD8      op,
+-				  PicturePtr pSrc,
+-				  PicturePtr pMask,
+-				  PicturePtr pDst,
+-				  INT16      xSrc,
+-				  INT16      ySrc,
+-				  INT16      xMask,
+-                                  INT16      yMask,
+-				  INT16      xDst,
+-				  INT16      yDst,
+-				  CARD16     width,
+-				  CARD16     height);
+-
+ CARD32
+ fbOver (CARD32 x, CARD32 y)
+ {
+@@ -98,42 +85,34 @@ fbIn (CARD32 x, CARD8 y)
+  */
+ 
+ void
+-fbCompositeSolidMask_nx8x8888 (CARD8      op,
+-			       PicturePtr pSrc,
+-			       PicturePtr pMask,
+-			       PicturePtr pDst,
+-			       INT16      xSrc,
+-			       INT16      ySrc,
+-			       INT16      xMask,
+-			       INT16      yMask,
+-			       INT16      xDst,
+-			       INT16      yDst,
+-			       CARD16     width,
+-			       CARD16     height)
++fbCompositeSolidMask_nx8x8888 (FbComposeData *params)
+ {
+     CARD32	src, srca;
+     CARD32	*dstLine, *dst, d, dstMask;
+     CARD8	*maskLine, *mask, m;
+     FbStride	dstStride, maskStride;
+-    CARD16	w;
++    CARD16	w, h;
+ 
+-    fbComposeGetSolid(pSrc, src, pDst->format);
++    fbComposeGetSolid(params->src, src, params->dest->format);
+ 
+-    dstMask = FbFullMask (pDst->pDrawable->depth);
++    dstMask = FbFullMask (params->dest->pDrawable->depth);
+     srca = src >> 24;
+     if (src == 0)
+ 	return;
+ 
+-    fbComposeGetStart (pDst, xDst, yDst, CARD32, dstStride, dstLine, 1);
+-    fbComposeGetStart (pMask, xMask, yMask, CARD8, maskStride, maskLine, 1);
++    fbComposeGetStart (params->dest, params->xDest, params->yDest, CARD32,
++                       dstStride, dstLine, 1);
++    fbComposeGetStart (params->mask, params->xMask, params->yMask, CARD8,
++                       maskStride, maskLine, 1);
+ 
+-    while (height--)
++    h = params->height;
++    while (h--)
+     {
+ 	dst = dstLine;
+ 	dstLine += dstStride;
+ 	mask = maskLine;
+ 	maskLine += maskStride;
+-	w = width;
++	w = params->width;
+ 
+ 	while (w--)
+ 	{
+@@ -156,43 +135,35 @@ fbCompositeSolidMask_nx8x8888 (CARD8    
+ }
+ 
+ void
+-fbCompositeSolidMask_nx8888x8888C (CARD8      op,
+-				   PicturePtr pSrc,
+-				   PicturePtr pMask,
+-				   PicturePtr pDst,
+-				   INT16      xSrc,
+-				   INT16      ySrc,
+-				   INT16      xMask,
+-				   INT16      yMask,
+-				   INT16      xDst,
+-				   INT16      yDst,
+-				   CARD16     width,
+-				   CARD16     height)
++fbCompositeSolidMask_nx8888x8888C (FbComposeData *params)
+ {
+     CARD32	src, srca;
+     CARD32	*dstLine, *dst, d, dstMask;
+     CARD32	*maskLine, *mask, ma;
+     FbStride	dstStride, maskStride;
+-    CARD16	w;
++    CARD16	w, h;
+     CARD32	m, n, o, p;
+ 
+-    fbComposeGetSolid(pSrc, src, pDst->format);
++    fbComposeGetSolid(params->src, src, params->dest->format);
+ 
+-    dstMask = FbFullMask (pDst->pDrawable->depth);
++    dstMask = FbFullMask (params->dest->pDrawable->depth);
+     srca = src >> 24;
+     if (src == 0)
+ 	return;
+ 
+-    fbComposeGetStart (pDst, xDst, yDst, CARD32, dstStride, dstLine, 1);
+-    fbComposeGetStart (pMask, xMask, yMask, CARD32, maskStride, maskLine, 1);
++    fbComposeGetStart (params->dest, params->xDest, params->yDest, CARD32,
++                       dstStride, dstLine, 1);
++    fbComposeGetStart (params->mask, params->xMask, params->yMask, CARD32,
++                       maskStride, maskLine, 1);
+ 
+-    while (height--)
++    h = params->height;
++    while (h--)
+     {
+ 	dst = dstLine;
+ 	dstLine += dstStride;
+ 	mask = maskLine;
+ 	maskLine += maskStride;
+-	w = width;
++	w = params->width;
+ 
+ 	while (w--)
+ 	{
+@@ -229,42 +200,34 @@ #define FbInOverC(src,srca,msk,dst,i,res
+ }
+ 
+ void
+-fbCompositeSolidMask_nx8x0888 (CARD8      op,
+-			       PicturePtr pSrc,
+-			       PicturePtr pMask,
+-			       PicturePtr pDst,
+-			       INT16      xSrc,
+-			       INT16      ySrc,
+-			       INT16      xMask,
+-			       INT16      yMask,
+-			       INT16      xDst,
+-			       INT16      yDst,
+-			       CARD16     width,
+-			       CARD16     height)
++fbCompositeSolidMask_nx8x0888 (FbComposeData *params)
+ {
+     CARD32	src, srca;
+     CARD8	*dstLine, *dst;
+     CARD32	d;
+     CARD8	*maskLine, *mask, m;
+     FbStride	dstStride, maskStride;
+-    CARD16	w;
++    CARD16	w, h;
+ 
+-    fbComposeGetSolid(pSrc, src, pDst->format);
++    fbComposeGetSolid(params->src, src, params->dest->format);
+ 
+     srca = src >> 24;
+     if (src == 0)
+ 	return;
+ 
+-    fbComposeGetStart (pDst, xDst, yDst, CARD8, dstStride, dstLine, 3);
+-    fbComposeGetStart (pMask, xMask, yMask, CARD8, maskStride, maskLine, 1);
++    fbComposeGetStart (params->dest, params->xDest, params->yDest, CARD8,
++                       dstStride, dstLine, 3);
++    fbComposeGetStart (params->mask, params->xMask, params->yMask, CARD8,
++                       maskStride, maskLine, 1);
+ 
+-    while (height--)
++    h = params->height;
++    while (h--)
+     {
+ 	dst = dstLine;
+ 	dstLine += dstStride;
+ 	mask = maskLine;
+ 	maskLine += maskStride;
+-	w = width;
++	w = params->width;
+ 
+ 	while (w--)
+ 	{
+@@ -291,42 +254,34 @@ fbCompositeSolidMask_nx8x0888 (CARD8    
+ }
+ 
+ void
+-fbCompositeSolidMask_nx8x0565 (CARD8      op,
+-				  PicturePtr pSrc,
+-				  PicturePtr pMask,
+-				  PicturePtr pDst,
+-				  INT16      xSrc,
+-				  INT16      ySrc,
+-				  INT16      xMask,
+-				  INT16      yMask,
+-				  INT16      xDst,
+-				  INT16      yDst,
+-				  CARD16     width,
+-				  CARD16     height)
++fbCompositeSolidMask_nx8x0565 (FbComposeData *params)
+ {
+     CARD32	src, srca;
+     CARD16	*dstLine, *dst;
+     CARD32	d;
+     CARD8	*maskLine, *mask, m;
+     FbStride	dstStride, maskStride;
+-    CARD16	w;
++    CARD16	w, h;
+ 
+-    fbComposeGetSolid(pSrc, src, pDst->format);
++    fbComposeGetSolid(params->src, src, params->dest->format);
+ 
+     srca = src >> 24;
+     if (src == 0)
+ 	return;
+ 
+-    fbComposeGetStart (pDst, xDst, yDst, CARD16, dstStride, dstLine, 1);
+-    fbComposeGetStart (pMask, xMask, yMask, CARD8, maskStride, maskLine, 1);
++    fbComposeGetStart (params->dest, params->xDest, params->yDest, CARD16,
++                       dstStride, dstLine, 1);
++    fbComposeGetStart (params->mask, params->xMask, params->yMask, CARD8,
++                       maskStride, maskLine, 1);
+ 
+-    while (height--)
++    h = params->height;
++    while (h--)
+     {
+ 	dst = dstLine;
+ 	dstLine += dstStride;
+ 	mask = maskLine;
+ 	maskLine += maskStride;
+-	w = width;
++	w = params->width;
+ 
+ 	while (w--)
+ 	{
+@@ -354,18 +309,7 @@ fbCompositeSolidMask_nx8x0565 (CARD8    
+ }
+ 
+ void
+-fbCompositeSolidMask_nx8888x0565C (CARD8      op,
+-				   PicturePtr pSrc,
+-				   PicturePtr pMask,
+-				   PicturePtr pDst,
+-				   INT16      xSrc,
+-				   INT16      ySrc,
+-				   INT16      xMask,
+-				   INT16      yMask,
+-				   INT16      xDst,
+-				   INT16      yDst,
+-				   CARD16     width,
+-				   CARD16     height)
++fbCompositeSolidMask_nx8888x0565C (FbComposeData *params)
+ {
+     CARD32	src, srca;
+     CARD16	src16;
+@@ -373,10 +317,10 @@ fbCompositeSolidMask_nx8888x0565C (CARD8
+     CARD32	d;
+     CARD32	*maskLine, *mask, ma;
+     FbStride	dstStride, maskStride;
+-    CARD16	w;
++    CARD16	w, h;
+     CARD32	m, n, o;
+ 
+-    fbComposeGetSolid(pSrc, src, pDst->format);
++    fbComposeGetSolid (params->src, src, params->dest->format);
+ 
+     srca = src >> 24;
+     if (src == 0)
+@@ -384,16 +328,19 @@ fbCompositeSolidMask_nx8888x0565C (CARD8
+ 
+     src16 = cvt8888to0565(src);
+ 
+-    fbComposeGetStart (pDst, xDst, yDst, CARD16, dstStride, dstLine, 1);
+-    fbComposeGetStart (pMask, xMask, yMask, CARD32, maskStride, maskLine, 1);
++    fbComposeGetStart (params->dest, params->xDest, params->yDest, CARD16,
++                       dstStride, dstLine, 1);
++    fbComposeGetStart (params->mask, params->xMask, params->yMask, CARD32,
++                       maskStride, maskLine, 1);
+ 
+-    while (height--)
++    h = params->height;
++    while (h--)
+     {
+ 	dst = dstLine;
+ 	dstLine += dstStride;
+ 	mask = maskLine;
+ 	maskLine += maskStride;
+-	w = width;
++	w = params->width;
+ 
+ 	while (w--)
+ 	{
+@@ -427,37 +374,29 @@ fbCompositeSolidMask_nx8888x0565C (CARD8
+ }
+ 
+ void
+-fbCompositeSrc_8888x8888 (CARD8      op,
+-			 PicturePtr pSrc,
+-			 PicturePtr pMask,
+-			 PicturePtr pDst,
+-			 INT16      xSrc,
+-			 INT16      ySrc,
+-			 INT16      xMask,
+-			 INT16      yMask,
+-			 INT16      xDst,
+-			 INT16      yDst,
+-			 CARD16     width,
+-			 CARD16     height)
++fbCompositeSrc_8888x8888 (FbComposeData *params)
+ {
+     CARD32	*dstLine, *dst, dstMask;
+     CARD32	*srcLine, *src, s;
+     FbStride	dstStride, srcStride;
+     CARD8	a;
+-    CARD16	w;
++    CARD16	w, h;
+ 
+-    fbComposeGetStart (pDst, xDst, yDst, CARD32, dstStride, dstLine, 1);
+-    fbComposeGetStart (pSrc, xSrc, ySrc, CARD32, srcStride, srcLine, 1);
++    fbComposeGetStart (params->dest, params->xDest, params->yDest, CARD32,
++                       dstStride, dstLine, 1);
++    fbComposeGetStart (params->src, params->xSrc, params->ySrc, CARD32,
++                       srcStride, srcLine, 1);
+ 
+-    dstMask = FbFullMask (pDst->pDrawable->depth);
++    dstMask = FbFullMask (params->dest->pDrawable->depth);
+ 
+-    while (height--)
++    h = params->height;
++    while (h--)
+     {
+ 	dst = dstLine;
+ 	dstLine += dstStride;
+ 	src = srcLine;
+ 	srcLine += srcStride;
+-	w = width;
++	w = params->width;
+ 
+ 	while (w--)
+ 	{
+@@ -473,36 +412,28 @@ fbCompositeSrc_8888x8888 (CARD8      op,
+ }
+ 
+ void
+-fbCompositeSrc_8888x0888 (CARD8      op,
+-			 PicturePtr pSrc,
+-			 PicturePtr pMask,
+-			 PicturePtr pDst,
+-			 INT16      xSrc,
+-			 INT16      ySrc,
+-			 INT16      xMask,
+-			 INT16      yMask,
+-			 INT16      xDst,
+-			 INT16      yDst,
+-			 CARD16     width,
+-			 CARD16     height)
++fbCompositeSrc_8888x0888 (FbComposeData *params)
+ {
+     CARD8	*dstLine, *dst;
+     CARD32	d;
+     CARD32	*srcLine, *src, s;
+     CARD8	a;
+     FbStride	dstStride, srcStride;
+-    CARD16	w;
++    CARD16	w, h;
+ 
+-    fbComposeGetStart (pDst, xDst, yDst, CARD8, dstStride, dstLine, 3);
+-    fbComposeGetStart (pSrc, xSrc, ySrc, CARD32, srcStride, srcLine, 1);
++    fbComposeGetStart (params->dest, params->xDest, params->yDest, CARD8,
++                       dstStride, dstLine, 3);
++    fbComposeGetStart (params->src, params->xSrc, params->ySrc, CARD32,
++                       srcStride, srcLine, 1);
+ 
+-    while (height--)
++    h = params->height;
++    while (h--)
+     {
+ 	dst = dstLine;
+ 	dstLine += dstStride;
+ 	src = srcLine;
+ 	srcLine += srcStride;
+-	w = width;
++	w = params->width;
+ 
+ 	while (w--)
+ 	{
+@@ -522,36 +453,28 @@ fbCompositeSrc_8888x0888 (CARD8      op,
+ }
+ 
+ void
+-fbCompositeSrc_8888x0565 (CARD8      op,
+-			 PicturePtr pSrc,
+-			 PicturePtr pMask,
+-			 PicturePtr pDst,
+-			 INT16      xSrc,
+-			 INT16      ySrc,
+-			 INT16      xMask,
+-			 INT16      yMask,
+-			 INT16      xDst,
+-			 INT16      yDst,
+-			 CARD16     width,
+-			 CARD16     height)
++fbCompositeSrc_8888x0565 (FbComposeData *params)
+ {
+     CARD16	*dstLine, *dst;
+     CARD32	d;
+     CARD32	*srcLine, *src, s;
+     CARD8	a;
+     FbStride	dstStride, srcStride;
+-    CARD16	w;
++    CARD16	w, h;
+ 
+-    fbComposeGetStart (pSrc, xSrc, ySrc, CARD32, srcStride, srcLine, 1);
+-    fbComposeGetStart (pDst, xDst, yDst, CARD16, dstStride, dstLine, 1);
++    fbComposeGetStart (params->src, params->xSrc, params->ySrc, CARD32,
++                       srcStride, srcLine, 1);
++    fbComposeGetStart (params->dest, params->xDest, params->yDest, CARD16,
++                       dstStride, dstLine, 1);
+ 
+-    while (height--)
++    h = params->height;
++    while (h--)
+     {
+ 	dst = dstLine;
+ 	dstLine += dstStride;
+ 	src = srcLine;
+ 	srcLine += srcStride;
+-	w = width;
++	w = params->width;
+ 
+ 	while (w--)
+ 	{
+@@ -574,35 +497,27 @@ fbCompositeSrc_8888x0565 (CARD8      op,
+ }
+ 
+ void
+-fbCompositeSrc_0565x0565 (CARD8      op,
+-			  PicturePtr pSrc,
+-			  PicturePtr pMask,
+-			  PicturePtr pDst,
+-			  INT16      xSrc,
+-			  INT16      ySrc,
+-			  INT16      xMask,
+-			  INT16      yMask,
+-			  INT16      xDst,
+-			  INT16      yDst,
+-			  CARD16     width,
+-			  CARD16     height)
++fbCompositeSrc_0565x0565 (FbComposeData *params)
+ {
+     CARD16	*dstLine, *dst;
+     CARD16	*srcLine, *src;
+     FbStride	dstStride, srcStride;
+-    CARD16	w;
++    CARD16	w, h;
+ 
+-    fbComposeGetStart (pSrc, xSrc, ySrc, CARD16, srcStride, srcLine, 1);
++    fbComposeGetStart (params->src, params->xSrc, params->ySrc, CARD16,
++                       srcStride, srcLine, 1);
+ 
+-    fbComposeGetStart (pDst, xDst, yDst, CARD16, dstStride, dstLine, 1);
++    fbComposeGetStart (params->dest, params->xDest, params->yDest, CARD16,
++                       dstStride, dstLine, 1);
+ 
+-    while (height--)
++    h = params->height;
++    while (h--)
+     {
+ 	dst = dstLine;
+ 	dstLine += dstStride;
+ 	src = srcLine;
+ 	srcLine += srcStride;
+-	w = width;
++	w = params->width;
+ 
+ 	while (w--)
+ 	    *dst++ = *src++;
+@@ -610,36 +525,28 @@ fbCompositeSrc_0565x0565 (CARD8      op,
+ }
+ 
+ void
+-fbCompositeSrcAdd_8000x8000 (CARD8	op,
+-			     PicturePtr pSrc,
+-			     PicturePtr pMask,
+-			     PicturePtr pDst,
+-			     INT16      xSrc,
+-			     INT16      ySrc,
+-			     INT16      xMask,
+-			     INT16      yMask,
+-			     INT16      xDst,
+-			     INT16      yDst,
+-			     CARD16     width,
+-			     CARD16     height)
++fbCompositeSrcAdd_8000x8000 (FbComposeData *params)
+ {
+     CARD8	*dstLine, *dst;
+     CARD8	*srcLine, *src;
+     FbStride	dstStride, srcStride;
+-    CARD16	w;
++    CARD16	w, h;
+     CARD8	s, d;
+     CARD16	t;
+ 
+-    fbComposeGetStart (pSrc, xSrc, ySrc, CARD8, srcStride, srcLine, 1);
+-    fbComposeGetStart (pDst, xDst, yDst, CARD8, dstStride, dstLine, 1);
++    fbComposeGetStart (params->src, params->xSrc, params->ySrc, CARD8,
++                       srcStride, srcLine, 1);
++    fbComposeGetStart (params->dest, params->xDest, params->yDest, CARD8,
++                       dstStride, dstLine, 1);
+ 
+-    while (height--)
++    h = params->height;
++    while (h--)
+     {
+ 	dst = dstLine;
+ 	dstLine += dstStride;
+ 	src = srcLine;
+ 	srcLine += srcStride;
+-	w = width;
++	w = params->width;
+ 
+ 	while (w--)
+ 	{
+@@ -660,37 +567,29 @@ fbCompositeSrcAdd_8000x8000 (CARD8	op,
+ }
+ 
+ void
+-fbCompositeSrcAdd_8888x8888 (CARD8	op,
+-			     PicturePtr pSrc,
+-			     PicturePtr pMask,
+-			     PicturePtr pDst,
+-			     INT16      xSrc,
+-			     INT16      ySrc,
+-			     INT16      xMask,
+-			     INT16      yMask,
+-			     INT16      xDst,
+-			     INT16      yDst,
+-			     CARD16     width,
+-			     CARD16     height)
++fbCompositeSrcAdd_8888x8888 (FbComposeData *params)
+ {
+     CARD32	*dstLine, *dst;
+     CARD32	*srcLine, *src;
+     FbStride	dstStride, srcStride;
+-    CARD16	w;
++    CARD16	w, h;
+     CARD32	s, d;
+     CARD16	t;
+     CARD32	m,n,o,p;
+ 
+-    fbComposeGetStart (pSrc, xSrc, ySrc, CARD32, srcStride, srcLine, 1);
+-    fbComposeGetStart (pDst, xDst, yDst, CARD32, dstStride, dstLine, 1);
++    fbComposeGetStart (params->src, params->xSrc, params->ySrc, CARD32,
++                       srcStride, srcLine, 1);
++    fbComposeGetStart (params->dest, params->xDest, params->yDest, CARD32,
++                       dstStride, dstLine, 1);
+ 
+-    while (height--)
++    h = params->height;
++    while (h--)
+     {
+ 	dst = dstLine;
+ 	dstLine += dstStride;
+ 	src = srcLine;
+ 	srcLine += srcStride;
+-	w = width;
++	w = params->width;
+ 
+ 	while (w--)
+ 	{
+@@ -717,18 +616,7 @@ fbCompositeSrcAdd_8888x8888 (CARD8	op,
+ }
+ 
+ void
+-fbCompositeSrcAdd_1000x1000 (CARD8	op,
+-			     PicturePtr pSrc,
+-			     PicturePtr pMask,
+-			     PicturePtr pDst,
+-			     INT16      xSrc,
+-			     INT16      ySrc,
+-			     INT16      xMask,
+-			     INT16      yMask,
+-			     INT16      xDst,
+-			     INT16      yDst,
+-			     CARD16     width,
+-			     CARD16     height)
++fbCompositeSrcAdd_1000x1000 (FbComposeData *params)
+ {
+     FbBits	*dstBits, *srcBits;
+     FbStride	dstStride, srcStride;
+@@ -736,20 +624,22 @@ fbCompositeSrcAdd_1000x1000 (CARD8	op,
+     int		dstXoff, dstYoff;
+     int		srcXoff, srcYoff;
+ 
+-    fbGetDrawable(pSrc->pDrawable, srcBits, srcStride, srcBpp, srcXoff, srcYoff);
++    fbGetDrawable(params->src->pDrawable, srcBits, srcStride, srcBpp,
++                  srcXoff, srcYoff);
+ 
+-    fbGetDrawable(pDst->pDrawable, dstBits, dstStride, dstBpp, dstXoff, dstYoff);
++    fbGetDrawable(params->dest->pDrawable, dstBits, dstStride, dstBpp,
++                  dstXoff, dstYoff);
+ 
+-    fbBlt (srcBits + srcStride * (ySrc + srcYoff),
++    fbBlt (srcBits + srcStride * (params->ySrc + srcYoff),
+ 	   srcStride,
+-	   xSrc + srcXoff,
++	   params->xSrc + srcXoff,
+ 
+-	   dstBits + dstStride * (yDst + dstYoff),
++	   dstBits + dstStride * (params->yDest + dstYoff),
+ 	   dstStride,
+-	   xDst + dstXoff,
++	   params->xDest + dstXoff,
+ 
+-	   width,
+-	   height,
++	   params->width,
++	   params->height,
+ 
+ 	   GXor,
+ 	   FB_ALLONES,
+@@ -760,18 +650,7 @@ fbCompositeSrcAdd_1000x1000 (CARD8	op,
+ }
+ 
+ void
+-fbCompositeSolidMask_nx1xn (CARD8      op,
+-			    PicturePtr pSrc,
+-			    PicturePtr pMask,
+-			    PicturePtr pDst,
+-			    INT16      xSrc,
+-			    INT16      ySrc,
+-			    INT16      xMask,
+-			    INT16      yMask,
+-			    INT16      xDst,
+-			    INT16      yDst,
+-			    CARD16     width,
+-			    CARD16     height)
++fbCompositeSolidMask_nx1xn (FbComposeData *params)
+ {
+     FbBits	*dstBits;
+     FbStip	*maskBits;
+@@ -781,17 +660,17 @@ fbCompositeSolidMask_nx1xn (CARD8      o
+     int		maskXoff, maskYoff;
+     FbBits	src;
+ 
+-    fbComposeGetSolid(pSrc, src, pDst->format);
++    fbComposeGetSolid(params->src, src, params->dest->format);
+ 
+     if ((src & 0xff000000) != 0xff000000)
+     {
+-	fbCompositeGeneral  (op, pSrc, pMask, pDst,
+-			     xSrc, ySrc, xMask, yMask, xDst, yDst,
+-			     width, height);
++	fbCompositeGeneral (params);
+ 	return;
+     }
+-    fbGetStipDrawable (pMask->pDrawable, maskBits, maskStride, maskBpp, maskXoff, maskYoff);
+-    fbGetDrawable (pDst->pDrawable, dstBits, dstStride, dstBpp, dstXoff, dstYoff);
++    fbGetStipDrawable (params->mask->pDrawable, maskBits, maskStride,
++                       maskBpp, maskXoff, maskYoff);
++    fbGetDrawable (params->dest->pDrawable, dstBits, dstStride, dstBpp,
++                   dstXoff, dstYoff);
+ 
+     switch (dstBpp) {
+     case 32:
+@@ -805,17 +684,17 @@ fbCompositeSolidMask_nx1xn (CARD8      o
+ 
+     src = fbReplicatePixel (src, dstBpp);
+ 
+-    fbBltOne (maskBits + maskStride * (yMask + maskYoff),
++    fbBltOne (maskBits + maskStride * (params->yMask + maskYoff),
+ 	      maskStride,
+-	      xMask + maskXoff,
++	      params->xMask + maskXoff,
+ 
+-	      dstBits + dstStride * (yDst + dstYoff),
++	      dstBits + dstStride * (params->yDest + dstYoff),
+ 	      dstStride,
+-	      (xDst + dstXoff) * dstBpp,
++	      (params->xDest + dstXoff) * dstBpp,
+ 	      dstBpp,
+ 
+-	      width * dstBpp,
+-	      height,
++	      params->width * dstBpp,
++	      params->height,
+ 
+ 	      0x0,
+ 	      src,
+@@ -843,13 +722,13 @@ fbComposite (CARD8      op,
+     int		    n;
+     BoxPtr	    pbox;
+     CompositeFunc   func = NULL;
++    FbComposeData   params;
+     Bool	    srcRepeat = pSrc->pDrawable && pSrc->repeat;
+     Bool	    maskRepeat = FALSE;
+     Bool	    srcAlphaMap = pSrc->alphaMap != 0;
+     Bool	    maskAlphaMap = FALSE;
+     Bool	    dstAlphaMap = pDst->alphaMap != 0;
+-    int		    x_msk, y_msk, x_src, y_src, x_dst, y_dst;
+-    int		    w, h, w_this, h_this;
++    int		    w, h;
+ 
+ #ifdef USE_MMX
+     static Bool mmx_setup = FALSE;
+@@ -1279,9 +1158,22 @@ #endif
+ 	break;
+     }
+ 
++    params.op = op;
++    params.src = pSrc;
++    params.mask = pMask;
++    params.dest = pDst;
++    params.xSrc = xSrc;
++    params.ySrc = ySrc;
++    params.xMask = xMask;
++    params.yMask = yMask;
++    params.xDest = xDst;
++    params.yDest = yDst;
++    params.width = width;
++    params.height = height;
++
+     if (!func) {
+          /* no fast path, use the general code */
+-         fbCompositeGeneral(op, pSrc, pMask, pDst, xSrc, ySrc, xMask, yMask, xDst, yDst, width, height);
++         fbCompositeGeneral(&params);
+          return;
+     }
+ 
+@@ -1304,59 +1196,63 @@ #endif
+     while (n--)
+     {
+ 	h = pbox->y2 - pbox->y1;
+-	y_src = pbox->y1 - yDst + ySrc;
+-	y_msk = pbox->y1 - yDst + yMask;
+-	y_dst = pbox->y1;
++	params.ySrc = pbox->y1 - yDst + ySrc;
++	params.yMask = pbox->y1 - yDst + yMask;
++	params.yDest = pbox->y1;
+ 	while (h)
+ 	{
+-	    h_this = h;
++	    params.height = h;
+ 	    w = pbox->x2 - pbox->x1;
+-	    x_src = pbox->x1 - xDst + xSrc;
+-	    x_msk = pbox->x1 - xDst + xMask;
+-	    x_dst = pbox->x1;
++	    params.xSrc = pbox->x1 - xDst + xSrc;
++	    params.xMask = pbox->x1 - xDst + xMask;
++	    params.xDest = pbox->x1;
+ 	    if (maskRepeat)
+ 	    {
+-		y_msk = mod (y_msk - pMask->pDrawable->y, pMask->pDrawable->height);
+-		if (h_this > pMask->pDrawable->height - y_msk)
+-		    h_this = pMask->pDrawable->height - y_msk;
+-		y_msk += pMask->pDrawable->y;
++		params.yMask = mod (params.yMask - pMask->pDrawable->y,
++                                    pMask->pDrawable->height);
++		if (params.height > pMask->pDrawable->height - params.yMask)
++		    params.height = pMask->pDrawable->height - params.yMask;
++		params.yMask += pMask->pDrawable->y;
+ 	    }
+ 	    if (srcRepeat)
+ 	    {
+-		y_src = mod (y_src - pSrc->pDrawable->y, pSrc->pDrawable->height);
+-		if (h_this > pSrc->pDrawable->height - y_src)
+-		    h_this = pSrc->pDrawable->height - y_src;
+-		y_src += pSrc->pDrawable->y;
++		params.ySrc = mod (params.ySrc - pSrc->pDrawable->y,
++                                   pSrc->pDrawable->height);
++		if (params.height > pSrc->pDrawable->height - params.ySrc)
++		    params.height = pSrc->pDrawable->height - params.ySrc;
++		params.ySrc += pSrc->pDrawable->y;
+ 	    }
+ 	    while (w)
+ 	    {
+-		w_this = w;
++		params.width = w;
+ 		if (maskRepeat)
+ 		{
+-		    x_msk = mod (x_msk - pMask->pDrawable->x, pMask->pDrawable->width);
+-		    if (w_this > pMask->pDrawable->width - x_msk)
+-			w_this = pMask->pDrawable->width - x_msk;
+-		    x_msk += pMask->pDrawable->x;
++		    params.xMask = mod (params.xMask - pMask->pDrawable->x,
++                                        pMask->pDrawable->width);
++		    if (params.width > pMask->pDrawable->width - params.xMask)
++			params.width = pMask->pDrawable->width - params.xMask;
++		    params.xMask += pMask->pDrawable->x;
+ 		}
+ 		if (srcRepeat)
+ 		{
+-		    x_src = mod (x_src - pSrc->pDrawable->x, pSrc->pDrawable->width);
+-		    if (w_this > pSrc->pDrawable->width - x_src)
+-			w_this = pSrc->pDrawable->width - x_src;
+-		    x_src += pSrc->pDrawable->x;
++		    params.xSrc = mod (params.xSrc - pSrc->pDrawable->x,
++                                       pSrc->pDrawable->width);
++		    if (params.width > pSrc->pDrawable->width - params.xSrc)
++			params.width = pSrc->pDrawable->width - params.xSrc;
++		    params.xSrc += pSrc->pDrawable->x;
+ 		}
+-		(*func) (op, pSrc, pMask, pDst,
+-			 x_src, y_src, x_msk, y_msk, x_dst, y_dst,
+-			 w_this, h_this);
+-		w -= w_this;
+-		x_src += w_this;
+-		x_msk += w_this;
+-		x_dst += w_this;
++
++		(*func) (&params);
++
++		w -= params.width;
++		params.xSrc += params.width;
++		params.xMask += params.width;
++		params.xDest += params.width;
+ 	    }
+-	    h -= h_this;
+-	    y_src += h_this;
+-	    y_msk += h_this;
+-	    y_dst += h_this;
++	    h -= params.height;
++	    params.ySrc += params.height;
++	    params.yMask += params.height;
++	    params.yDest += params.height;
+ 	}
+ 	pbox++;
+     }
+diff --git a/fb/fbpict.h b/fb/fbpict.h
+index 4ad0324..00e160e 100644
+--- a/fb/fbpict.h
++++ b/fb/fbpict.h
+@@ -342,6 +342,8 @@ typedef struct _FbComposeData {
+     CARD16	height;
+ } FbComposeData;
+ 
++typedef void  (*CompositeFunc) (FbComposeData *params);
++
+ typedef FASTCALL void (*CombineMaskU) (CARD32 *src, const CARD32 *mask, int width);
+ typedef FASTCALL void (*CombineFuncU) (CARD32 *dest, const CARD32 *src, int width);
+ typedef FASTCALL void (*CombineFuncC) (CARD32 *dest, CARD32 *src, CARD32 *mask, int width);
+@@ -355,18 +357,7 @@ typedef struct _FbComposeFunctions {
+ /* fbcompose.c */
+ 
+ void
+-fbCompositeGeneral (CARD8	op,
+-		    PicturePtr	pSrc,
+-		    PicturePtr	pMask,
+-		    PicturePtr	pDst,
+-		    INT16	xSrc,
+-		    INT16	ySrc,
+-		    INT16	xMask,
+-		    INT16	yMask,
+-		    INT16	xDst,
+-		    INT16	yDst,
+-		    CARD16	width,
+-		    CARD16	height);
++fbCompositeGeneral (FbComposeData *params);
+ 
+ 
+ /* fbedge.c */
+@@ -391,186 +382,43 @@ CARD32
+ fbIn (CARD32 x, CARD8 y);
+ 
+ void
+-fbCompositeSolidMask_nx8x8888 (CARD8      op,
+-			       PicturePtr pSrc,
+-			       PicturePtr pMask,
+-			       PicturePtr pDst,
+-			       INT16      xSrc,
+-			       INT16      ySrc,
+-			       INT16      xMask,
+-			       INT16      yMask,
+-			       INT16      xDst,
+-			       INT16      yDst,
+-			       CARD16     width,
+-			       CARD16     height);
++fbCompositeSolidMask_nx8x8888 (FbComposeData *params);
+ 
+ void
+-fbCompositeSolidMask_nx8x0888 (CARD8      op,
+-			       PicturePtr pSrc,
+-			       PicturePtr pMask,
+-			       PicturePtr pDst,
+-			       INT16      xSrc,
+-			       INT16      ySrc,
+-			       INT16      xMask,
+-			       INT16      yMask,
+-			       INT16      xDst,
+-			       INT16      yDst,
+-			       CARD16     width,
+-			       CARD16     height);
++fbCompositeSolidMask_nx8x0888 (FbComposeData *params);
+ 
+ void
+-fbCompositeSolidMask_nx8888x8888C (CARD8      op,
+-				   PicturePtr pSrc,
+-				   PicturePtr pMask,
+-				   PicturePtr pDst,
+-				   INT16      xSrc,
+-				   INT16      ySrc,
+-				   INT16      xMask,
+-				   INT16      yMask,
+-				   INT16      xDst,
+-				   INT16      yDst,
+-				   CARD16     width,
+-				   CARD16     height);
++fbCompositeSolidMask_nx8888x8888C (FbComposeData *params);
+ 
+ void
+-fbCompositeSolidMask_nx8x0565 (CARD8      op,
+-			       PicturePtr pSrc,
+-			       PicturePtr pMask,
+-			       PicturePtr pDst,
+-			       INT16      xSrc,
+-			       INT16      ySrc,
+-			       INT16      xMask,
+-			       INT16      yMask,
+-			       INT16      xDst,
+-			       INT16      yDst,
+-			       CARD16     width,
+-			       CARD16     height);
++fbCompositeSolidMask_nx8x0565 (FbComposeData *params);
+ 
+ void
+-fbCompositeSolidMask_nx8888x0565C (CARD8      op,
+-				   PicturePtr pSrc,
+-				   PicturePtr pMask,
+-				   PicturePtr pDst,
+-				   INT16      xSrc,
+-				   INT16      ySrc,
+-				   INT16      xMask,
+-				   INT16      yMask,
+-				   INT16      xDst,
+-				   INT16      yDst,
+-				   CARD16     width,
+-				   CARD16     height);
++fbCompositeSolidMask_nx8888x0565C (FbComposeData *params);
+ 
+ void
+-fbCompositeSrc_8888x8888 (CARD8      op,
+-			  PicturePtr pSrc,
+-			  PicturePtr pMask,
+-			  PicturePtr pDst,
+-			  INT16      xSrc,
+-			  INT16      ySrc,
+-			  INT16      xMask,
+-			  INT16      yMask,
+-			  INT16      xDst,
+-			  INT16      yDst,
+-			  CARD16     width,
+-			  CARD16     height);
++fbCompositeSrc_8888x8888 (FbComposeData *params);
+ 
+ void
+-fbCompositeSrc_8888x0888 (CARD8      op,
+-			 PicturePtr pSrc,
+-			 PicturePtr pMask,
+-			 PicturePtr pDst,
+-			 INT16      xSrc,
+-			 INT16      ySrc,
+-			 INT16      xMask,
+-			 INT16      yMask,
+-			 INT16      xDst,
+-			 INT16      yDst,
+-			 CARD16     width,
+-			 CARD16     height);
++fbCompositeSrc_8888x0888 (FbComposeData *params);
+ 
+ void
+-fbCompositeSrc_8888x0565 (CARD8      op,
+-			  PicturePtr pSrc,
+-			  PicturePtr pMask,
+-			  PicturePtr pDst,
+-			  INT16      xSrc,
+-			  INT16      ySrc,
+-			  INT16      xMask,
+-			  INT16      yMask,
+-			  INT16      xDst,
+-			  INT16      yDst,
+-			  CARD16     width,
+-			  CARD16     height);
++fbCompositeSrc_8888x0565 (FbComposeData *params);
+ 
+ void
+-fbCompositeSrc_0565x0565 (CARD8      op,
+-			  PicturePtr pSrc,
+-			  PicturePtr pMask,
+-			  PicturePtr pDst,
+-			  INT16      xSrc,
+-			  INT16      ySrc,
+-			  INT16      xMask,
+-			  INT16      yMask,
+-			  INT16      xDst,
+-			  INT16      yDst,
+-			  CARD16     width,
+-			  CARD16     height);
++fbCompositeSrc_0565x0565 (FbComposeData *params);
+ 
+ void
+-fbCompositeSrcAdd_8000x8000 (CARD8	op,
+-			     PicturePtr pSrc,
+-			     PicturePtr pMask,
+-			     PicturePtr pDst,
+-			     INT16      xSrc,
+-			     INT16      ySrc,
+-			     INT16      xMask,
+-			     INT16      yMask,
+-			     INT16      xDst,
+-			     INT16      yDst,
+-			     CARD16     width,
+-			     CARD16     height);
++fbCompositeSrcAdd_8000x8000 (FbComposeData *params);
+ 
+ void
+-fbCompositeSrcAdd_8888x8888 (CARD8	op,
+-			     PicturePtr pSrc,
+-			     PicturePtr pMask,
+-			     PicturePtr pDst,
+-			     INT16      xSrc,
+-			     INT16      ySrc,
+-			     INT16      xMask,
+-			     INT16      yMask,
+-			     INT16      xDst,
+-			     INT16      yDst,
+-			     CARD16     width,
+-			     CARD16     height);
++fbCompositeSrcAdd_8888x8888 (FbComposeData *params);
+ 
+ void
+-fbCompositeSrcAdd_1000x1000 (CARD8	op,
+-			     PicturePtr pSrc,
+-			     PicturePtr pMask,
+-			     PicturePtr pDst,
+-			     INT16      xSrc,
+-			     INT16      ySrc,
+-			     INT16      xMask,
+-			     INT16      yMask,
+-			     INT16      xDst,
+-			     INT16      yDst,
+-			     CARD16     width,
+-			     CARD16     height);
++fbCompositeSrcAdd_1000x1000 (FbComposeData *params);
+ 
+ void
+-fbCompositeSolidMask_nx1xn (CARD8      op,
+-			    PicturePtr pSrc,
+-			    PicturePtr pMask,
+-			    PicturePtr pDst,
+-			    INT16      xSrc,
+-			    INT16      ySrc,
+-			    INT16      xMask,
+-			    INT16      yMask,
+-			    INT16      xDst,
+-			    INT16      yDst,
+-			    CARD16     width,
+-			    CARD16     height);
++fbCompositeSolidMask_nx1xn (FbComposeData *params);
+ 
+ void
+ fbComposite (CARD8      op,
