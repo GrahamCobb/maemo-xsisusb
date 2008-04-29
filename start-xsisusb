@@ -1,0 +1,4 @@
+#!/bin/sh
+/usr/bin/Xsisusb :1 "$@" &
+/usr/lib/sapwood/sapwood-server --display :1 &
+/usr/bin/matchbox-window-manager -display :1 -theme default -use_titlebar yes -use_desktop_mode plain -use_lowlight no -use_cursor yes -use_dialog_mode static &
