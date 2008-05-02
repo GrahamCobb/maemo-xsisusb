@@ -16,6 +16,7 @@ Description: SiS USB X server
  using the sisusbvga kernel driver.
 
 Package: xsisusb-dbg
+Section: debug
 Architecture: arm armel
 Depends: xsisusb (= ${Source-Version})
 Description: SiS USB X server (debug symbols)

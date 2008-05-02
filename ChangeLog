@@ -1,3 +1,14 @@
+2008-05-02  Graham Cobb  <g+770@cobb.uk.net>
+
+	* start-sismirror: Create mirroring script
+
+	* hw/kdrive/sisusb/sisusb_device.c (sisusbOpenDevice): 
+	Add support for 640x480, 800x600 and 1280x1024
+
+2008-05-01  Graham Cobb  <g+770@cobb.uk.net>
+
+	* debian/control: Change section for -dbg package
+
 2008-04-29  Graham Cobb  <g+770@cobb.uk.net>
 
 	* start-xsisusb: Create Xsisusb startup script
