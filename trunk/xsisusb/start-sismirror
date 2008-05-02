@@ -1,0 +1,6 @@
+/usr/bin/Xsisusb :1 -screen 800x600x16/16 "$@" &
+/usr/lib/sapwood/sapwood-server --display :1 &
+/usr/bin/matchbox-window-manager -display :1 -theme default -use_titlebar no -use_desktop_mode plain -use_lowlight no -use_cursor yes -use_dialog_mode static &
+x11vnc -shared -forever -allow 127.0.0.1 -solid -display :0 &
+vncviewer --display :1 --hostname localhost:0
+killall Xsisusb x11vnc

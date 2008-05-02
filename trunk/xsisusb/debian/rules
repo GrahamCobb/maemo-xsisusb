@@ -95,6 +95,7 @@ install: build
 	cd obj-$(DEB_BUILD_GNU_TYPE) && $(MAKE) DESTDIR=$(CURDIR)/debian/tmp install
 	install -d $(CURDIR)/debian/xsisusb/usr/bin
 	install -m555 $(CURDIR)/start-xsisusb $(CURDIR)/debian/xsisusb/usr/bin/
+	install -m555 $(CURDIR)/start-sismirror $(CURDIR)/debian/xsisusb/usr/bin/
 #	install -d $(CURDIR)/debian/xsisusb/etc
 #	install -m644 $(CURDIR)/debian/pointercal-* $(CURDIR)/debian/xsisusb/etc/
 #	install -d $(CURDIR)/debian/xsisusb/etc/osso-af-init

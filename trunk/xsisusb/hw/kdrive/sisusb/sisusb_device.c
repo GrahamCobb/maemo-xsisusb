@@ -144,7 +144,7 @@ void
 sisusbOpenDevice (KdScreenInfo *screen)
 {
     SiSusbPriv		*priv = screen->card->driver;
-    int bpp=0;
+    int bpp=0, mode=-1;
     char* sisusb_device = "/dev/sisusbvga0";
 
     priv->sisusbfd = open(sisusb_device, O_RDWR);
@@ -153,16 +153,20 @@ sisusbOpenDevice (KdScreenInfo *screen)
       exit(1);
     }
     
-    /* Hardcode mode to 1024x768 */
-    if ( screen->fb[0].bitsPerPixel == 2*8 ) bpp=2;
-    else if ( screen->fb[0].bitsPerPixel == 4*8 ) bpp=4;
+    if ( (screen->width == 640) && (screen->height == 480) ) mode = 0;
+    if ( (screen->width == 800) && (screen->height == 600) ) mode = 1;
+    if ( (screen->width == 1024) && (screen->height == 768) ) mode = 2;
+    if ( (screen->width == 1280) && (screen->height == 1024) ) mode = 3;
 
-    if ( (screen->width != 1024) || (screen->height != 768) || (bpp == 0) ) {
-      fprintf(stderr, "Invalid mode (%dx%dx%d/%d): mode must be 1024x768x24/32 or 1024x768x16/16, 32\n", screen->width, screen->height, screen->fb[0].depth, screen->fb[0].bitsPerPixel);
+    if ( screen->fb[0].bitsPerPixel == 2*8 ) bpp=2;
+    if ( screen->fb[0].bitsPerPixel == 4*8 ) bpp=4;
+
+    if ( (mode == -1) || (bpp == 0) ) {
+      fprintf(stderr, "Invalid mode (%dx%dx%d/%d): mode must be 640x480x24/32, 640x480x16/16, 800x600x24/32, 800x600x16/16, 1024x768x24/32, 1024x768x16/16, 1280x1024x24/32, 1280x1024x16/16\n", screen->width, screen->height, screen->fb[0].depth, screen->fb[0].bitsPerPixel);
       exit(2);
     }
 
-    sisusb_setmode(screen, &sd[2], screen->fb[0].bitsPerPixel/8);
+    sisusb_setmode(screen, &sd[mode], screen->fb[0].bitsPerPixel/8);
 }
 
 void
