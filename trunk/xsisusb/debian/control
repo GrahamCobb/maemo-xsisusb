@@ -8,11 +8,11 @@ Standards-Version: 3.6.1.0
 
 Package: xsisusb
 Architecture: arm armel
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}, sisusbvga
 Provides: xserver
 Recommends: xkbdata, xkbutils
 Description: SiS USB X server
- The Xsisusb server provides a driver for the USB2VGA2 SiS USB device
+ The Xsisusb server displays on the USB2VGA2 SiS USB device
  using the sisusbvga kernel driver.
 
 Package: xsisusb-dbg
