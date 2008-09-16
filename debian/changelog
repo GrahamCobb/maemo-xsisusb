@@ -1,10 +1,17 @@
-xsisusb (1:1.3.99.0~git20070321+maemo+20080421-2) unstable; urgency=low
+xsisusb (0.3) unstable; urgency=low
+
+  * Support additional display modes in Xsisusb
+  * Add mirroring script
+
+ -- Graham Cobb <g+770@cobb.uk.net>  Tue, 16 Sep 2008 16:30:57 +0100
+
+xsisusb (0.2-1) unstable; urgency=low
 
   * Add dependency on sisusbvga
 
  -- Graham Cobb <g+770@cobb.uk.net>  Sat, 13 Sep 2008 00:46:43 +0100
 
-xsisusb (1:1.3.99.0~git20070321+maemo+20080421-1) unstable; urgency=low
+xsisusb (0.1-1) unstable; urgency=low
 
   * Create sisusb driver for kdrive
   * Build Xsisusb
