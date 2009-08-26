@@ -1,3 +1,7 @@
+2009-08-26  Graham Cobb  <g+770@cobb.uk.net>
+
+	* debian/rules (confflags): Disable XSP extension
+
 2008-05-02  Graham Cobb  <g+770@cobb.uk.net>
 
 	* start-sismirror: Create mirroring script
