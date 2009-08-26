@@ -63,6 +63,7 @@ confflags += --disable-xorg --disable-dmx --disable-xvfb --disable-xprint \
 build: build-stamp
 build-stamp: $(STAMP_DIR)/patch
 	dh_testdir
+	autoreconf -f -i -s
 
 	mkdir -p obj-$(DEB_BUILD_GNU_TYPE)/GL
 	cd obj-$(DEB_BUILD_GNU_TYPE) && \

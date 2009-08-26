@@ -2,6 +2,7 @@
 
 	* debian/rules (confflags): Disable XSP extension
 	(confflags): Remove conflicts between confflags and KDRIVE_PLATFORM_FLAGS
+	(build-stamp): Add autoreconf
 
 2008-05-02  Graham Cobb  <g+770@cobb.uk.net>
 
