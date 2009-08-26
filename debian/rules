@@ -45,7 +45,7 @@ endif
 INSTALL=/usr/bin/install
 
 # Build Xsisusb
-KDRIVE_PLATFORM_FLAGS=--enable-sisusb --disable-xephyr --enable-xsp --enable-xkb --with-vendor-string=Maemo
+KDRIVE_PLATFORM_FLAGS=--enable-sisusb --disable-xephyr --disable-xsp --enable-xkb --with-vendor-string=Maemo
 
 KDRIVE_PLATFORM_FLAGS += --disable-xgl --disable-xsdl --disable-xfake --disable-xfbdev --disable-kdrive-vesa
 
@@ -53,8 +53,8 @@ export DH_OPTIONS
 
 confflags += --disable-xorg --disable-dmx --disable-xvfb --disable-xprint \
              --disable-lbx --disable-xorgconfig --disable-xorgcfg \
-             --disable-xtrap --disable-xsp --disable-xnest --disable-xwin \
-             --disable-xgl --enable-kdrive $(KDRIVE_PLATFORM_FLAGS) \
+             --disable-xtrap --disable-xnest --disable-xwin \
+             --enable-kdrive $(KDRIVE_PLATFORM_FLAGS) \
              --disable-glx --disable-dri --enable-builtin-fonts \
 	     --disable-xevie --disable-ipv6 --enable-dbus \
 	     --enable-null-root-cursor --with-xkb-output=/tmp \
